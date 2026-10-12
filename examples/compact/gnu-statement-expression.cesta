@@ -1,0 +1,9 @@
+(unit
+  (var int (function printf ((const char) (* format)) ...))
+  (fn int main (void)
+    (var unsigned value (block (var unsigned local 4u) (* local 3u)))
+    (var unsigned chosen (?: value 99u))
+    (var unsigned ([] ranges 4) (init (= ([] 0 ... 3) 2u)))
+    (if (!= ([] ranges 2) 2u) (return 1))
+    (call printf "%u\n" chosen)
+    (return (!= chosen 12u))))

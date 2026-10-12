@@ -1,0 +1,130 @@
+import "../../presentations/CompactC.module" as compact
+Module PresentationControls {
+  Theory Operators() { compact.CompactBasics() }
+  Theory Words() {
+    Empty Terms {
+      Var . Expr ::= "(" "variable" COrdinaryName ")";
+      IntConst . Expr ::= "(" "integer" CInteger ")";
+      Add . Expr ::= "(" "add" Expr Expr ")";
+      Multiply . Expr ::= "(" "multiply" Expr Expr ")";
+      Indirection . Expr ::= "(" "indirect" Expr ")";
+      AddAssign . Expr ::= "(" "add-assign" Expr Expr ")";
+      StatementAssign . Statement ::= "(" "assign-statement" Expr Expr ")";
+    }
+    Rewrites {
+      statement: (StatementAssign x y) ~> (ExpressionStatement (SomeFullExpression (AddAssign x y)));
+    }
+  }
+  Theory DuplicateDispatch() {
+    Empty Terms {
+      Add . Expr ::= "(" "+" Expr Expr ")";
+      Multiply . Expr ::= "(" "+" Expr Expr ")";
+    }
+  }
+  Theory WrongResult() {
+    Empty Terms { Broken . Expr ::= "(" "broken" ")"; }
+    Equations { (Broken) == (Return (NoFullExpression)); }
+  }
+  Theory WrongArgument() {
+    Empty Terms { Broken . Expr ::= "(" "broken" Statement ")"; }
+    Equations { (Broken x) == (Indirection x); }
+  }
+  Theory NonlinearHole() {
+    Empty Terms { Broken . Expr ::= "(" "broken" Expr Expr ")"; }
+    Equations { (Broken x y) == (Add x x); }
+  }
+  Theory UnknownTarget() {
+    Empty Terms { Broken . Expr ::= "(" "broken" ")"; }
+    Equations { (Broken) == (ImaginaryConstructor); }
+  }
+  Theory UnknownSource() {
+    Empty Equations { (ImaginarySurface) == (Int); }
+  }
+  Theory CyclicPass() {
+    Empty Terms { Recursive . Expr ::= Expr; }
+    Equations { (Recursive x) == (UnaryPlus x); }
+  }
+  Theory AmbiguousPass() {
+    Empty Terms { A . Expr ::= Expr; B . Expr ::= Expr; }
+    Equations { (A x) == (UnaryPlus x); (B x) == (Negate x); }
+  }
+  Theory WrongArity() {
+    Empty Terms { Broken . Expr ::= "(" "broken" Expr ")"; }
+    Equations { (Broken x) == (Add x); }
+  }
+  Theory DuplicateInterpretation() {
+    Empty Terms { Broken . Expr ::= "(" "broken" Expr ")"; }
+    Equations { (Broken x) == (UnaryPlus x); (Broken x) == (Negate x); }
+  }
+  Theory OpenHole() {
+    Empty Terms { Broken . Expr ::= "(" "broken" Expr ")"; }
+    Equations { (Broken x) == (UnaryPlus y); }
+  }
+  Theory EmptyPass() { Empty }
+  Theory DuplicateLexical() {
+    Empty Terms { A . Expr ::= CInteger; B . Expr ::= CInteger; }
+    Equations { (A x) == (IntConst x); (B x) == (IntConst x); }
+  }
+  Theory WordLexicalOverlap() {
+    Empty Terms { Var . Expr ::= COrdinaryName; Word . Expr ::= "name"; }
+    Equations {
+      (Word) == (GNUEmptyCompoundLiteral (TypeName (PrimitiveSpecifierQualifiers (Int) (List)) (NoAbstractDeclarator)));
+    }
+  }
+  Theory PassLexicalOverlap() {
+    Empty Terms { Var . Expr ::= COrdinaryName; Wrapped . Expr ::= Statement; Word . Statement ::= "name"; }
+    Equations {
+      (Wrapped x) == (GNUStatementExpression (Block (List (BlockStatement x))));
+      (Word) == (ExpressionStatement (NoFullExpression));
+    }
+  }
+  Theory PrefixLexicalOverlap() {
+    Empty Terms { Var . Expr ::= COrdinaryName; Prefix . Expr ::= "p" COrdinaryName; }
+    Equations { (Prefix x) == (Indirection (Var x)); }
+  }
+  Theory DuplicatePrefix() {
+    Empty Terms { A . Expr ::= "*" COrdinaryName; B . Expr ::= "**" COrdinaryName; }
+    Equations { (A x) == (Indirection (Var x)); (B x) == (Indirection (Indirection (Var x))); }
+  }
+  Theory PrefixWordOverlap() {
+    Empty Terms { Prefix . Expr ::= "*" COrdinaryName; Word . Expr ::= "*x"; }
+    Equations {
+      (Prefix x) == (Indirection (Var x));
+      (Word) == (GNUEmptyCompoundLiteral (TypeName (PrimitiveSpecifierQualifiers (Int) (List)) (NoAbstractDeclarator)));
+    }
+  }
+  Theory DottedList() {
+    Empty Terms { Broken . Expr ::= "(" "broken" Expr15 "." [Expr1] ")"; }
+    Equations { (Broken f a) == (Call f (Arguments a)); }
+  }
+  Theory PrefixedLiteral() {
+    Empty Terms { Broken . Expr ::= "#" CInteger; }
+    Equations { (Broken a) == (IntConst a); }
+  }
+  Theory OverlappingTuples() {
+    Empty Terms { A . Expr ::= "(" Expr1 Expr1 ")"; B . Expr ::= "(" Expr1 Expr1 ")"; }
+    Equations { (A x y) == (Add x y); (B x y) == (Multiply x y); }
+  }
+  Theory OverlappingDefaults() {
+    Empty Terms {
+      Statements . BlockItem ::= Statement;
+      Declarations . BlockItem ::= Declaration;
+      StatementReturn . Statement ::= "(" "return" Expr ")";
+      DeclarationReturn . Declaration ::= "(" "return" DeclarationSpecifiers ")";
+    }
+    Equations {
+      (Statements a) == (BlockStatement a);
+      (Declarations a) == (BlockDeclaration a);
+      (StatementReturn a) == (JumpStatement (Return (SomeFullExpression a)));
+      (DeclarationReturn a) == (Declaration a (NoInitDeclarators));
+    }
+  }
+  Theory PrefixPassOverlap() {
+    Empty Terms { Prefix . Expr ::= "*" COrdinaryName; Wrapped . Expr ::= Statement; Word . Statement ::= "*x"; }
+    Equations {
+      (Prefix x) == (Indirection (Var x));
+      (Wrapped x) == (GNUStatementExpression (Block (List (BlockStatement x))));
+      (Word) == (ExpressionStatement (NoFullExpression));
+    }
+  }
+}

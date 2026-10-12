@@ -1,0 +1,8 @@
+(unit
+  (var int (function printf ((const char) (* format)) ...))
+  (_Static_assert (>= (sizeof type unsigned) 2) "\"unsigned width\"")
+  (fn int main (void)
+    (var unsigned value 11u)
+    (var unsigned result (_Generic value (unsigned value) (default 0u)))
+    (call printf "%u\n" result)
+    (return (!= result 11u))))

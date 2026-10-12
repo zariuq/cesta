@@ -1,0 +1,5 @@
+Module DuplicateParameter {
+  Theory Base() { Empty }
+  Theory Duplicate(b: Base, b: Base) { b }
+  theory Duplicate(Base(), Base())
+}

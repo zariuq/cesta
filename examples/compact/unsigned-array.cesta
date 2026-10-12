@@ -1,0 +1,11 @@
+(unit
+  (var int (function printf ((const char) (* format)) ...))
+  (fn unsigned sum (((const unsigned) (* a)) ((unsigned long) n))
+    (var unsigned total 0u)
+    (for (var (const unsigned) (* p) a) (!= p (+ a n)) (++ p) (+= total (* p)))
+    (return total))
+  (fn int main (void)
+    (var unsigned ([] values 4) (init 1u 2u 3u 4u))
+    (var unsigned result (call sum values 4ul))
+    (call printf "%u\n" result)
+    (return (!= result 10u))))

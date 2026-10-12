@@ -1,0 +1,10 @@
+(unit
+  (var int (function printf ((const char) (* format)) ...))
+  (typedef (struct Bits (unsigned (: flag 3)) (unsigned value)) Bits)
+  (fn int main (void)
+    (var Bits bits (init (= (. flag) 3u) (= (. value) 7u)))
+    (var Bits other (compound Bits (= (. flag) 1u) (= (. value) 2u)))
+    (var unsigned result (+ (. bits flag) (. bits value)))
+    (if (!= (+ (. other flag) (. other value)) 3u) (return 1))
+    (call printf "%u\n" result)
+    (return (!= result 10u))))

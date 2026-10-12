@@ -1,0 +1,14 @@
+Module LawComposition {
+  Theory Base() {
+    Empty Terms { Z . Term ::= "zero"; }
+    Equations { (Z) == (Z); }
+    Rewrites { zero: (Z) ~> (Z); }
+  }
+  Theory Join() { Base() \/ Base() }
+  Theory Meet() { Base() /\ Base() }
+  Theory Difference() { Base() \ Base() }
+  Theory Additional() {
+    Base() Equations { (Z) == (Z); }
+  }
+  Theory IndependentLaws() { Additional() \ Base() }
+}

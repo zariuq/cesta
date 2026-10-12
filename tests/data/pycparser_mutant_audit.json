@@ -1,0 +1,2822 @@
+{
+  "pycparser_version": "3.00",
+  "claim": "Finite source-hashed audit of observed parser limitations; paired independent witnesses distinguish the causes. This is not a C parser adequacy proof.",
+  "families": {
+    "typedef_enumerator": {
+      "stage": "oracle-scope-name-classification",
+      "cause": "The enumerator parser demands ID, while the lexer returns TYPEID for a still-visible outer typedef. The enumerator is an ordinary-identifier binder and may legally hide that outer name.",
+      "clauses": [
+        "6.2.1p4",
+        "6.2.1p7",
+        "6.7.2.2p1"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_enumerator",
+          "first_line": 1208,
+          "last_line": 1216,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_lex_on_lbrace_func",
+          "first_line": 164,
+          "last_line": 165,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_is_type_in_scope",
+          "first_line": 151,
+          "last_line": 159,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "typedef int T; void f(void) { int n = (enum {T})1 + T; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "typedef int T; void f(void) { int n = (enum {K})1 + K; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "declaration_without_declarator": {
+      "stage": "grammar-vs-declaration-constraint",
+      "cause": "The standard's declaration production has an optional init-declarator-list. These particular declarator-free declarations violate the separate 6.7p2 constraint; GCC/Clang diagnose and accept, while pycparser's AST builder refuses them.",
+      "clauses": [
+        "6.7p1",
+        "6.7p2"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_decl_body_with_spec",
+          "first_line": 744,
+          "last_line": 783,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_build_declarations",
+          "first_line": 318,
+          "last_line": 419,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "int;\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "int x;\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "vla_leading_dereference": {
+      "stage": "oracle-grammar-lookahead",
+      "cause": "The array suffix parser consumes any leading * as the lone prototype [*] case and immediately requires ], excluding the distinct assignment-expression alternative with unary dereference.",
+      "clauses": [
+        "6.7.6.2p1",
+        "6.5.3.2p1"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_array_decl_common",
+          "first_line": 1292,
+          "last_line": 1347,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "void f(int *n) { int a[*n+1]; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "void f(int *n) { int a[(*n)+1]; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "gnu_builtin_type_context": {
+      "stage": "oracle-dialect-and-initial-type-environment",
+      "cause": "Preprocessed system headers use the compiler's predefined GNU __builtin_va_list type. pycparser starts with an empty type environment and treats the spelling as ID, then diagnoses a missing type. Later GNU syntax in the same file is not reached by this first failure.",
+      "clauses": [],
+      "source_locations": [
+        {
+          "function": "parse",
+          "first_line": 90,
+          "last_line": 113,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_parse_declaration_specifiers",
+          "first_line": 797,
+          "last_line": 915,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "typedef __builtin_va_list V;\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "typedef int V;\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "typedef_spelled_label": {
+      "stage": "oracle-separate-namespace-classification",
+      "cause": "A label spelling that is also a typedef is lexed TYPEID; block-item classification treats it as a declaration. goto also insists on ID although label and ordinary identifier namespaces are distinct.",
+      "clauses": [
+        "6.2.1p3",
+        "6.2.3p1",
+        "6.8.1p1",
+        "6.8.6.1p1"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_block_item",
+          "first_line": 1580,
+          "last_line": 1583,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_parse_statement",
+          "first_line": 1549,
+          "last_line": 1569,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_parse_jump_statement",
+          "first_line": 1712,
+          "last_line": 1732,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "typedef int T; void f(void) { T: ; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "typedef int T; void f(void) { L: ; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "initializer_binding_too_late": {
+      "stage": "oracle-declarator-binding-timing",
+      "cause": "_parse_init_declarator parses the initializer before _build_declarations registers the new ordinary identifier. The initializer thus still tokenizes the shadowed spelling as TYPEID even though its declarator is complete.",
+      "clauses": [
+        "6.2.1p7",
+        "6.7p1"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_init_declarator",
+          "first_line": 1063,
+          "last_line": 1068,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_build_declarations",
+          "first_line": 318,
+          "last_line": 419,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "typedef int T; void f(void) { int T = sizeof((int)T); }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "typedef int T; void f(void) { int x = sizeof((int)x); }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "for_scope_not_restored": {
+      "stage": "oracle-control-scope-lifetime",
+      "cause": "Iteration parsing creates no scope frame for the for statement. The local int T remains in the containing brace scope and masks the outer typedef at the following T x declaration.",
+      "clauses": [
+        "6.8.5p5",
+        "6.2.1p4"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_iteration_statement",
+          "first_line": 1670,
+          "last_line": 1708,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_lex_on_lbrace_func",
+          "first_line": 164,
+          "last_line": 165,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_lex_on_rbrace_func",
+          "first_line": 167,
+          "last_line": 168,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "typedef int T; void f(void) { for (int T=0;;) break; T x; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "typedef int T; void f(void) { for (int i=0;;) break; T x; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "sizeof_compound_literal": {
+      "stage": "oracle-grammar-lookahead",
+      "cause": "sizeof accepts a parenthesized type name immediately without checking for a following compound-literal body. It leaves {1} unconsumed instead of choosing sizeof unary-expression.",
+      "clauses": [
+        "6.5.3p1",
+        "6.5.2p1"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_unary_expression",
+          "first_line": 1844,
+          "last_line": 1872,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_parse_cast_expression",
+          "first_line": 1823,
+          "last_line": 1835,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "void f(void) { (void)sizeof (int){1}; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "void f(void) { (void)sizeof ((int){1}); }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "compound_literal_postfix": {
+      "stage": "oracle-grammar-projection",
+      "cause": "The compound-literal branch returns before running the postfix suffix loop. Thus a following member selection .x is rejected although compound literals are postfix expressions.",
+      "clauses": [
+        "6.5.2p1",
+        "6.5.2.3p1"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_postfix_expression",
+          "first_line": 1876,
+          "last_line": 1922,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "void f(void) { int n = (struct {int x;}){1}.x; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "void f(void) { int n = ((struct {int x;}){1}).x; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "duplicated_void": {
+      "stage": "oracle-constraint-underchecking",
+      "cause": "pycparser accumulates simple type specifiers and concatenates them, accepting void void. C11 6.7.2p2 forbids this type combination; Cesta's declared constraint-sensitive specifier refactoring refuses it, as do both compilers.",
+      "clauses": [
+        "6.7.2p2"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_declaration_specifiers",
+          "first_line": 797,
+          "last_line": 915,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_fix_decl_name_type",
+          "first_line": 256,
+          "last_line": 294,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "void void f(void) {}\n",
+        "expected": {
+          "cesta": {
+            "accepted": false
+          },
+          "gcc": {
+            "accepted": false
+          },
+          "clang": {
+            "accepted": false
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "void f(void) {}\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "missing_type_implicit_int": {
+      "stage": "oracle-dialect-and-constraint-underchecking",
+      "cause": "The external-definition parser deliberately supplies C89 implicit int, or fills a missing type when declaration specifiers contain only a function specifier. The requested C11 source/profile requires the type-bearing declaration specifiers.",
+      "clauses": [
+        "6.9.1p1",
+        "6.7.2p2"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_external_declaration",
+          "first_line": 646,
+          "last_line": 723,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_fix_decl_name_type",
+          "first_line": 256,
+          "last_line": 294,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "f(void) {}\n",
+        "expected": {
+          "cesta": {
+            "accepted": false
+          },
+          "gcc": {
+            "accepted": false
+          },
+          "clang": {
+            "accepted": false
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "int f(void) { return 0; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "nonfunction_external_body": {
+      "stage": "oracle-grammar-and-function-shape-underchecking",
+      "cause": "After deleting struct, the oracle's implicit-int function-definition branch accepts an ordinary non-function declarator followed by a brace body. The resulting FuncDef has a TypeDecl, not FuncDecl; neither C11 nor either compiler admits this source.",
+      "clauses": [
+        "6.9.1p1",
+        "6.9.1p2"
+      ],
+      "source_locations": [
+        {
+          "function": "_parse_external_declaration",
+          "first_line": 646,
+          "last_line": 723,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_build_function_definition",
+          "first_line": 421,
+          "last_line": 440,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "s { int x; };\n",
+        "expected": {
+          "cesta": {
+            "accepted": false
+          },
+          "gcc": {
+            "accepted": false
+          },
+          "clang": {
+            "accepted": false
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "struct s { int x; };\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "scope_underflow_exception": {
+      "stage": "oracle-internal-exception",
+      "cause": "Deleting an opening brace or duplicating a closing brace invokes the lexer's close-brace callback with only the file scope remaining. _pop_scope asserts; this is an invalid oracle result, not a ParseError or acceptance.",
+      "clauses": [],
+      "source_locations": [
+        {
+          "function": "_pop_scope",
+          "first_line": 127,
+          "last_line": 129,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        },
+        {
+          "function": "_lex_on_rbrace_func",
+          "first_line": 167,
+          "last_line": 168,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "int x; }\n",
+        "expected": {
+          "cesta": {
+            "accepted": false
+          },
+          "gcc": {
+            "accepted": false
+          },
+          "clang": {
+            "accepted": false
+          },
+          "pycparser": {
+            "accepted": null,
+            "valid_result": false,
+            "exception": "AssertionError"
+          }
+        }
+      },
+      "control": {
+        "source": "void f(void) {}\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "aggregate_names_exception": {
+      "stage": "oracle-internal-exception",
+      "cause": "Deleting the semicolon between aggregate declarations lets adjacent aggregate specifiers reach the malformed-declaration repair branch, which accesses .names on Struct/Union nodes. These classes do not have that field; this is an invalid oracle result.",
+      "clauses": [],
+      "source_locations": [
+        {
+          "function": "_build_declarations",
+          "first_line": 318,
+          "last_line": 419,
+          "parser_source_sha256": "dc504a18b8e3942deff1a7f00ff727311ebb226a18232ef76b858a411ea15fb8"
+        }
+      ],
+      "witness": {
+        "source": "struct S { int x; } struct T { int y; };\n",
+        "expected": {
+          "cesta": {
+            "accepted": false
+          },
+          "gcc": {
+            "accepted": false
+          },
+          "clang": {
+            "accepted": false
+          },
+          "pycparser": {
+            "accepted": null,
+            "valid_result": false,
+            "exception": "AttributeError"
+          }
+        }
+      },
+      "control": {
+        "source": "struct S { int x; }; struct T { int y; };\n",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    },
+    "if_scope_not_restored": {
+      "stage": "oracle-control-scope-lifetime",
+      "cause": "The selection statement needs its own scope; an enum constant in the controlling expression must not hide an outer typedef after the statement.",
+      "clauses": [
+        "6.8.4p3",
+        "6.2.1p4"
+      ],
+      "source_locations": [],
+      "witness": {
+        "source": "typedef int T;void f(void){if(sizeof(enum{T})==0);T x;}",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": false,
+            "valid_result": true
+          }
+        }
+      },
+      "control": {
+        "source": "typedef int T;void f(void){if(sizeof(enum{K})==0);T x;}",
+        "expected": {
+          "cesta": {
+            "accepted": true
+          },
+          "gcc": {
+            "accepted": true
+          },
+          "clang": {
+            "accepted": true
+          },
+          "pycparser": {
+            "accepted": true,
+            "valid_result": true
+          }
+        }
+      }
+    }
+  },
+  "cases": {
+    "4414131b39f5df0d34f93aad11c62bd2d6fbdb3e7624b3be5ed401903c6e25cd": {
+      "family": "missing_type_implicit_int",
+      "source": "types.c",
+      "edit": "delete",
+      "token": 22,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "d7f7c4ce78fa99f4093d76e919f04e6f7bf445cc023bcf5069ed1022fb369ace": {
+      "family": "duplicated_void",
+      "source": "argument_scope.c",
+      "edit": "duplicate",
+      "token": 5,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "69394ee7d0561cefd508658e579d19133b7f3e7b00c425849efef4afd1ee6e0a": {
+      "family": "typedef_enumerator",
+      "source": "loop_scopes.c",
+      "edit": "duplicate",
+      "token": 109,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "102ffce9e0afcd7619b2adf73262bd3005583e88cac032a49301b7cfb56d82de": {
+      "family": "typedef_enumerator",
+      "source": "no_local_scope.c",
+      "edit": "duplicate",
+      "token": 10,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "6926d31570e64feec6e19bacdb07ddcdacf084c7082dbb0c08e8e7488f2a385d": {
+      "family": "declaration_without_declarator",
+      "source": "atomic.c",
+      "edit": "delete",
+      "token": 29,
+      "spelling_hex": "636f6e73745f61746f6d69635f696e74",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "313db4f7243cd40333fc9558d770cd8a9f2c2e45459eaf87097fb6f5bcbf9e28": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 50,
+      "spelling_hex": "2a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "e632bee4b324f96144787c0e336c4c51e8617efb63fbd65ec68f115cd0d792dd": {
+      "family": "typedef_enumerator",
+      "source": "no_local_scope.c",
+      "edit": "duplicate",
+      "token": 26,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "88bf1f18ca4df39a33afe199bb7222ba4d0bae7ec18fea405ed280ee213ef0db": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "delete",
+      "token": 10,
+      "spelling_hex": "756e7369676e6564",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "bba0e0509e66bcfaf5b4607d8514a9a0acb8f266635d5c5b05d0d2eff9c7f776": {
+      "family": "typedef_enumerator",
+      "source": "if_scopes.c",
+      "edit": "duplicate",
+      "token": 27,
+      "spelling_hex": "73697a656f66",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "94ec35478ddd2190f798ba8d43cb27f330675ff94c29ee5cbfae4a9b229ea218": {
+      "family": "duplicated_void",
+      "source": "typedef_star.c",
+      "edit": "duplicate",
+      "token": 4,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "df0fd512f07ffd5c403128d27f1b5825a63688b3a9f057edb4697b94c779b70d": {
+      "family": "typedef_enumerator",
+      "source": "if_scopes.c",
+      "edit": "delete",
+      "token": 27,
+      "spelling_hex": "73697a656f66",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "7a5d00ef56d91eccd59731c5b309a71a8c7ca534da24593089507379cb8c5040": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 108,
+      "spelling_hex": "6d79656e756d",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "df92dcf25921586211feac5c4bfec1f44f643a16a0a49bddceab5529320f34bc": {
+      "family": "scope_underflow_exception",
+      "source": "statements.c",
+      "edit": "delete",
+      "token": 117,
+      "spelling_hex": "7b",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "7eff5570655546eb1997784594c0cb4dbd624257f617023550e87c6a695b3e02": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "duplicate",
+      "token": 52,
+      "spelling_hex": "2a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "3bb7ddd44241e130f573adb37331efe40370142daecfc5401dfda9a5205043a4": {
+      "family": "scope_underflow_exception",
+      "source": "block_scope.c",
+      "edit": "duplicate",
+      "token": 33,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "11e6297ee6f3bd5fa5b4dbb8f70887106da19064365dd14ad23481e68e08e434": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "delete",
+      "token": 7,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "ef9d524674d6684293b7d84548ab3d1cc8902f1facbe4d1941c00d6ac27c6065": {
+      "family": "duplicated_void",
+      "source": "c-namespace.c",
+      "edit": "duplicate",
+      "token": 0,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "3b7a1418f44a5647f3dd94f5fbc154480537d054383560185bc169ef55125793": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 1746,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "f85b66c30715045a3e55bd3e9a3d8e08256f4d97329190dd512913ff141d2b87": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope_extends.c",
+      "edit": "duplicate",
+      "token": 45,
+      "spelling_hex": "2b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "b2a8d9e34f8ca81f18780b52980e91299f88b66c4750454f5bacffb6580b7c3e": {
+      "family": "aggregate_names_exception",
+      "source": "struct-recursion.c",
+      "edit": "delete",
+      "token": 9,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AttributeError"
+      }
+    },
+    "6537983655ca1c31fa034145e89416be74d5af9110d027ffd7f4a39fd017e588": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "duplicate",
+      "token": 15,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "5963d0b82a7cabab53731921da1855d798d5d6c3994874f18a2aa2b2fe923a2a": {
+      "family": "for_scope_not_restored",
+      "source": "dangling_else_lookahead.c",
+      "edit": "duplicate",
+      "token": 28,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "d65142f85717f87d4abd73d9c61b252e43ba7a84a35eded4d433043603bcea37": {
+      "family": "missing_type_implicit_int",
+      "source": "variable_star.c",
+      "edit": "delete",
+      "token": 5,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "54af8df7cec5642d0d8a63c2f7562dba245c82b3f35dd5dcec77e7df4a681f77": {
+      "family": "missing_type_implicit_int",
+      "source": "local_scope.c",
+      "edit": "delete",
+      "token": 4,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "ee9ad8f6c1f977340461264fcf69997cbd7a0d245edc8183c0168cec1d005ffa": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 61,
+      "spelling_hex": "696e74",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "695bff1e29f84a51638e2f552ba58e3a6b40c0c309a084c64e3ce835d731ce47": {
+      "family": "nonfunction_external_body",
+      "source": "designator.c",
+      "edit": "delete",
+      "token": 13,
+      "spelling_hex": "737472756374",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "48bc1980a6b81cd8526c7a5304444837ef0868f60df10e57471a6048272ad191": {
+      "family": "scope_underflow_exception",
+      "source": "char-literal-printing.c",
+      "edit": "duplicate",
+      "token": 49,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "a8309a59268b9ab2426f7054222a723004949e9f03269bcfffca23005e4d7642": {
+      "family": "typedef_enumerator",
+      "source": "if_scopes.c",
+      "edit": "duplicate",
+      "token": 67,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "67ebe2058c39d2174d067ca3776ef676683f58b99fe547bda3c009032c066acb": {
+      "family": "duplicated_void",
+      "source": "variable_star.c",
+      "edit": "duplicate",
+      "token": 5,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "873e6358aeed8a71e1d257aab29dd59385bace1ef386053a350d7f79d3a1a7cc": {
+      "family": "scope_underflow_exception",
+      "source": "c-namespace.c",
+      "edit": "delete",
+      "token": 4,
+      "spelling_hex": "7b",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "7c49ecf4bdf0ca3e4bd4824b6b9eb186ec12a12ba4a5c88f1b75bd4db1e5ce8f": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "duplicate",
+      "token": 3,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "530b15e7f58ebf83947104e90f834351e3cc0a496a33f94cab8efb4cba9031cd": {
+      "family": "missing_type_implicit_int",
+      "source": "c11-noreturn.c",
+      "edit": "delete",
+      "token": 6,
+      "spelling_hex": "696e74",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "ba1cd885a4cbdd10913eb00d2c2e425fd2bfc0fde887f4c27cc31a1b08daf74b": {
+      "family": "typedef_spelled_label",
+      "source": "namespaces.c",
+      "edit": "duplicate",
+      "token": 13,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "4689b9560a68aa00a581aa51d626e4ec91da5571be385e52a9ec1945b9bfd515": {
+      "family": "declaration_without_declarator",
+      "source": "c1x-alignas.c",
+      "edit": "delete",
+      "token": 5,
+      "spelling_hex": "6331",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "988748cbb39825e8fc36938729769d3ccf7c7417757883733fc63c3ef545e83e": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "duplicate",
+      "token": 65,
+      "spelling_hex": "2a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "b1fed6880d58e5bdae7b58a83a850ca5bffe285dc0033a5651b435dd2cc729dc": {
+      "family": "typedef_enumerator",
+      "source": "if_scopes.c",
+      "edit": "duplicate",
+      "token": 50,
+      "spelling_hex": "73697a656f66",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "d06549315eb60a3e529bf444efe61051be7011c28c4f42e1816b7c1446d8e2f5": {
+      "family": "compound_literal_postfix",
+      "source": "expressions.c",
+      "edit": "delete",
+      "token": 7,
+      "spelling_hex": "73697a656f66",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "14d9fe3041b1ab76a7037345bb598c92ca389dcd3e841f1e591751e00acb44a2": {
+      "family": "typedef_enumerator",
+      "source": "enum_constant_visibility.c",
+      "edit": "duplicate",
+      "token": 37,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "2f3329c20d184c64651ceddb03499da1d562c34cbe24a546237e3a980d8c5ab7": {
+      "family": "initializer_binding_too_late",
+      "source": "declarator_visibility.c",
+      "edit": "duplicate",
+      "token": 37,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "7057c98e111231638e1e6ee9e68f3fad21dd3c3b5454808f5d855e7f94ddb6bf": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope.c",
+      "edit": "duplicate",
+      "token": 11,
+      "spelling_hex": "2a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "20ca70317d53b279e296aeb72d61e7781742ee8eb5acb099c976e4516f60c3c6": {
+      "family": "typedef_spelled_label",
+      "source": "namespaces.c",
+      "edit": "delete",
+      "token": 54,
+      "spelling_hex": "31",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "9353369b71abc2f8c456046c8893b9e03f1d40ecfccbad5631262702a544fb6b": {
+      "family": "for_scope_not_restored",
+      "source": "dangling_else_lookahead.c",
+      "edit": "duplicate",
+      "token": 21,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "38024ef9ede68d9bd3041ec3243a8fb9fbd3d6e3175887a684542d328524a0af": {
+      "family": "declaration_without_declarator",
+      "source": "block_scope.c",
+      "edit": "delete",
+      "token": 31,
+      "spelling_hex": "75",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "955cd84d61e02c8011b31c417a01938702259e220cfec6b3efdc22487ef135e1": {
+      "family": "scope_underflow_exception",
+      "source": "types.c",
+      "edit": "duplicate",
+      "token": 10,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "b7d2e74aad893c6c0a94628e734947ee267b0a380e2b64c931d63599fdca46a0": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "delete",
+      "token": 17,
+      "spelling_hex": "78",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "1884066ed8c57969d9d6dd5146f9e3ff965149b67f3a605a34e549d7122d0360": {
+      "family": "initializer_binding_too_late",
+      "source": "declarator_visibility.c",
+      "edit": "duplicate",
+      "token": 26,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "635061bd092cbe06469ac23f54e8a76eb3fc7d91e25bcf798edba38c65b757c6": {
+      "family": "typedef_spelled_label",
+      "source": "namespaces.c",
+      "edit": "delete",
+      "token": 20,
+      "spelling_hex": "78",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "1959aac9b98ae0eb2a5a0a640608b0dafc5a48f0f5c45004fe6d741dd80569a6": {
+      "family": "missing_type_implicit_int",
+      "source": "c-namespace.c",
+      "edit": "delete",
+      "token": 0,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "1cf59718aba7c390ec4f498e11b47f87b678827d7e2f39fc6da949778790b1ae": {
+      "family": "typedef_enumerator",
+      "source": "if_scopes.c",
+      "edit": "duplicate",
+      "token": 61,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "f78673587d49791a2082ebf1d63064992895360bcf148af40567174abc37bde1": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "delete",
+      "token": 952,
+      "spelling_hex": "5f5f7265737472696374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "2f81dd09bcdfde3afde5d36866995bcfc54fc6e5ef29231be452c3c3ad9ab2b6": {
+      "family": "typedef_enumerator",
+      "source": "loop_scopes.c",
+      "edit": "duplicate",
+      "token": 53,
+      "spelling_hex": "73697a656f66",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "54e70267972209ba96e689bf26c77cedffe7a1605a22139b53006b30f5affeb8": {
+      "family": "scope_underflow_exception",
+      "source": "control-scope.c",
+      "edit": "duplicate",
+      "token": 33,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "f7ada5d27e80726e80d50cb170d7ec0c211f056fbc364828da4a4dd989228b08": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope_extends.c",
+      "edit": "duplicate",
+      "token": 41,
+      "spelling_hex": "2b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "d5fff3cff6de4d574f9983caec75efa1ae535d49b5025365380ffc840d42feb0": {
+      "family": "scope_underflow_exception",
+      "source": "char-literal-printing.c",
+      "edit": "duplicate",
+      "token": 119,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "76afaf4ab312be27e8bcd17d11968647e45b150ebde9a03fc9283e6581ab18f9": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 524,
+      "spelling_hex": "2a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "6d93c4ec879a3567e3e53c2b12865f64d0ccf0963d951e06f273a25070cc9656": {
+      "family": "missing_type_implicit_int",
+      "source": "typedef_star.c",
+      "edit": "delete",
+      "token": 4,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "1adaffb39f089a0c09c79dba4ed5f3ceae6634f10f12b26ba0aa85b02d6f3102": {
+      "family": "sizeof_compound_literal",
+      "source": "expressions.c",
+      "edit": "delete",
+      "token": 120,
+      "spelling_hex": "5830",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "4cd3580b477019294c08444fe96e6386cac27d4c375f8a7de56039b85ab3c19b": {
+      "family": "duplicated_void",
+      "source": "local_typedef.c",
+      "edit": "duplicate",
+      "token": 4,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "958136b8736c74a7371828e879d3148cdd1f7399b1a2484c1ac855af9eda75a2": {
+      "family": "scope_underflow_exception",
+      "source": "argument_scope.c",
+      "edit": "duplicate",
+      "token": 16,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "98d0d6d4af09c856b21cb384f3a1a04342bed9aba4469060f022e4247d49b340": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "duplicate",
+      "token": 13,
+      "spelling_hex": "636f6e7374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "d60d1404b47f599f7cb2b526fbd64c6b144f1bf8dc6ecb2f125ce5f79c4a11bf": {
+      "family": "typedef_enumerator",
+      "source": "enum_shadows_typedef.c",
+      "edit": "duplicate",
+      "token": 30,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "bcd76f1975b70a76e925f16ad81cbd7c3af3fb1020368162e3715cfe42f8f352": {
+      "family": "scope_underflow_exception",
+      "source": "function_parameter_scope.c",
+      "edit": "delete",
+      "token": 7,
+      "spelling_hex": "7b",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "61ee8b06e013ccd79dc87c2a9bcfe82bcb678dbc6f2ca9fc36f0ecb32cfe68e7": {
+      "family": "missing_type_implicit_int",
+      "source": "local_typedef.c",
+      "edit": "delete",
+      "token": 4,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "fbb05ddf075a81b9c0b17dfa2250bbc231ffcddc85263bb6dbe67cc47f1ecc2e": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "delete",
+      "token": 13,
+      "spelling_hex": "636f6e7374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "b72deaafeb866ab6664cae18c3a22636b5468346d92fb393c74a74982575efa9": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "delete",
+      "token": 19,
+      "spelling_hex": "5f5f755f73686f7274",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "2e23e84c5d0600ffa9acc8f4c55af4b8f97ab3a6e974c62c1c875b620635c2e1": {
+      "family": "scope_underflow_exception",
+      "source": "long-long-struct.c",
+      "edit": "duplicate",
+      "token": 7,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "b2ad84d44c16d3f947beb696350b1df4b30d952a62a28025c6982220a880b57b": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 1753,
+      "spelling_hex": "5f5f7265737472696374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "3566c93a356cea926c847d0c1f65af6ae6f6d5bfb7c56560b583853d8b39b121": {
+      "family": "scope_underflow_exception",
+      "source": "aligned_struct_c18.c",
+      "edit": "duplicate",
+      "token": 9,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "eb2c09c343f56d55b508e7119ac8999c3489a1d72f62d53f37a860366ec1287d": {
+      "family": "typedef_enumerator",
+      "source": "no_local_scope.c",
+      "edit": "delete",
+      "token": 39,
+      "spelling_hex": "72657475726e",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "6823cfc79f85fafa8633d66b636c26d786d1ac444c8cb75ad5e8a0f6966e208c": {
+      "family": "sizeof_compound_literal",
+      "source": "expressions.c",
+      "edit": "delete",
+      "token": 139,
+      "spelling_hex": "61",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "6fedb8a2610e9663c009005f626814bd6c5b95f752ca201aff6ecf4ce13958f3": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "delete",
+      "token": 1758,
+      "spelling_hex": "5f5f7265737472696374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "20d822c01764eec6799348af2cce0f4eb1d216394a6882b53a48f7d9196a0fb1": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "delete",
+      "token": 749,
+      "spelling_hex": "636f6e7374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "8b56766b422ef4f0cc6525031ad05df916bac7890963c4931bc488c09684bab1": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "duplicate",
+      "token": 175,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "de5211eeb955d31955c10b068c55c72a7a2c5de0a058d13f2e1e9d358f39438b": {
+      "family": "duplicated_void",
+      "source": "parameter_declaration_ambiguity.c",
+      "edit": "duplicate",
+      "token": 4,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "7a51a7a3c2759280033a98bdd1773696839c9326452563dc53f8e00cbcc4cac8": {
+      "family": "initializer_binding_too_late",
+      "source": "declarator_visibility.c",
+      "edit": "delete",
+      "token": 22,
+      "spelling_hex": "78",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "50476c0219c963ddc2ffc46b4bb5fff9161dc0e3cfcc289ad503034c8725303d": {
+      "family": "scope_underflow_exception",
+      "source": "bitfield_declaration_ambiguity.ok.c",
+      "edit": "duplicate",
+      "token": 28,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "3c27d85f5cbb5dbba066c4b6eea20df1261222f1ae3776a341c8aa3a9a0c784d": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "duplicate",
+      "token": 55,
+      "spelling_hex": "2a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "a76b90761b3c566171c776c3600b113de886580197ec3b13f2539f59c9ae580c": {
+      "family": "typedef_enumerator",
+      "source": "dangling_else_lookahead.if.c",
+      "edit": "delete",
+      "token": 7,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "43daa744709ab2b0c7cd71a43c63d10249e38c5481e41f41eb616e21f9377fb2": {
+      "family": "nonfunction_external_body",
+      "source": "types.c",
+      "edit": "delete",
+      "token": 4,
+      "spelling_hex": "737472756374",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "9cc77d8e58b4199a7ccc30f9fd348aab3e6cfa93047c89dfca24658c866626ed": {
+      "family": "typedef_spelled_label",
+      "source": "namespaces.c",
+      "edit": "duplicate",
+      "token": 23,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "174a2ab0f8d022a2cb9550d81512648fb56a0ff3d308b0eff7e7b872d61e6d82": {
+      "family": "scope_underflow_exception",
+      "source": "function_parameter_scope.c",
+      "edit": "duplicate",
+      "token": 9,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "71f683907371d1fb1d734ea52551a07144d0eabb22f2f0a75d1d99f56c3bf4f6": {
+      "family": "missing_type_implicit_int",
+      "source": "function-decls.c",
+      "edit": "delete",
+      "token": 0,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "eb61d21befe7a8eb50e7fdfd7c73a7c5425da394b027f8ab7352b07f19dde766": {
+      "family": "duplicated_void",
+      "source": "block_scope.c",
+      "edit": "duplicate",
+      "token": 7,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "98ed1e5065d499201bf4949c52aa6bc03035f80ae5cd748265c0340405d87391": {
+      "family": "declaration_without_declarator",
+      "source": "c-namespace.c",
+      "edit": "delete",
+      "token": 9,
+      "spelling_hex": "585858",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "988c36be9a7fca570268c927ef5eb4790d863fb8038d320d90971863d0f88872": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "duplicate",
+      "token": 138,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "3477e3fa509be19a9a9cd096cd9332baa1ea76a35446015bcfa4e0f4e13a9932": {
+      "family": "typedef_spelled_label",
+      "source": "namespaces.c",
+      "edit": "duplicate",
+      "token": 48,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "b31a33a189577b7098511b18c9c4dabf8dfb0a6a65dd6ade63b8f91d11bf6771": {
+      "family": "scope_underflow_exception",
+      "source": "char-literal-printing.c",
+      "edit": "duplicate",
+      "token": 169,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "c307fe20fc5b3ebd76e9e16aadb751c7c5180a366b8d25968e7ed5fcea98e84d": {
+      "family": "typedef_spelled_label",
+      "source": "namespaces.c",
+      "edit": "delete",
+      "token": 57,
+      "spelling_hex": "676f746f",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "ca526de829685d4159756ab6cb0b00919a4314bddecfb5adacde5eb1ed4fc4a7": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope.c",
+      "edit": "duplicate",
+      "token": 5,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "163301d957f701c91ff257e2bf2109a82c1068b3ea9206c1f995620e24cce4bc": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "duplicate",
+      "token": 21,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "48f814c2dda3ed795ba717e48efe9e38a43773459abc529cc1ae139217c0e378": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 148,
+      "spelling_hex": "4532",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "501aff53930ca981bb3a35a321ba8d75937eb64b9c076e8ecca23cad78b797cd": {
+      "family": "typedef_enumerator",
+      "source": "enum_constant_visibility.c",
+      "edit": "delete",
+      "token": 7,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "0c1da7f23a5113d2f75268b4a6504cfbdab474b9889fb20a36078bf28610dcc0": {
+      "family": "scope_underflow_exception",
+      "source": "namespaces.c",
+      "edit": "duplicate",
+      "token": 14,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "e8b43390a5a47a4eba6ecb6691d37aa86bda09dc2dbb0d3f2a666ef0c470972b": {
+      "family": "missing_type_implicit_int",
+      "source": "c11-noreturn.c",
+      "edit": "delete",
+      "token": 1,
+      "spelling_hex": "696e74",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "4ccaa5855d4700527288d16dda5f8748be6432ab6bdea9cc8db89eec059070fd": {
+      "family": "nonfunction_external_body",
+      "source": "struct-recursion.c",
+      "edit": "delete",
+      "token": 0,
+      "spelling_hex": "737472756374",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "02bfba0b557b68d363a87d42a0504f0df2de7da92bfa2d60ef965d3a2e1f7f14": {
+      "family": "initializer_binding_too_late",
+      "source": "declarator_visibility.c",
+      "edit": "duplicate",
+      "token": 30,
+      "spelling_hex": "73697a656f66",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "2248f73b72f0b2bd3affd404fdf26e475adb46bdd2b17584fa84f2870ae01443": {
+      "family": "typedef_enumerator",
+      "source": "enum_constant_visibility.c",
+      "edit": "duplicate",
+      "token": 12,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "5d5ec0a0fe637030aca8d84fe7990c06db27b7fb7bbfb48d5e3458fc5b8aae1a": {
+      "family": "scope_underflow_exception",
+      "source": "typedef_star.c",
+      "edit": "delete",
+      "token": 9,
+      "spelling_hex": "7b",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "e51e3fcb9e97c121f70c8547b8e7c87fc874a66b7ad463be6e421fa5dcf25961": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope.c",
+      "edit": "delete",
+      "token": 21,
+      "spelling_hex": "79",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "932872ef35e66834a833899969faad82782b4e7ba71d34e29f539f402167aeb1": {
+      "family": "duplicated_void",
+      "source": "statements.c",
+      "edit": "duplicate",
+      "token": 68,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "e3c24e3cfce55a8a2bee7b65c1bb35782b0412df6f24d3b1988ed6953d18322a": {
+      "family": "initializer_binding_too_late",
+      "source": "declarator_visibility.c",
+      "edit": "delete",
+      "token": 12,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "dc02382c1092be1204652f3a7c73e48c4b442f3c650c56bb3f8d93f42283df45": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope.c",
+      "edit": "duplicate",
+      "token": 44,
+      "spelling_hex": "2b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "1c8168fcbfaf57cd0d2f57c8245998815ed016eeb6e82a2956ef7d9b76ff9490": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "delete",
+      "token": 1351,
+      "spelling_hex": "31",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "5df44d0c92714ccd051c8a13b30a9c34087bec449cfbec8d838d00ec2b660980": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "delete",
+      "token": 675,
+      "spelling_hex": "65787465726e",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "8efdf21646314d777b8652718e618c6b4956318cbfba3d1f70ca12c8bb2868b8": {
+      "family": "for_scope_not_restored",
+      "source": "dangling_else_lookahead.c",
+      "edit": "duplicate",
+      "token": 24,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "5be040a4f3bb4c91e8338d3730d6a040ee5c00e3929d84878f58d200d45032dd": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope_extends.c",
+      "edit": "duplicate",
+      "token": 27,
+      "spelling_hex": "2b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "35591977df6d079f44a0e713460a6448a698bdaf0d4f30893626b7442334a7bc": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope_extends.c",
+      "edit": "duplicate",
+      "token": 50,
+      "spelling_hex": "2b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "bb5b680b221cf1f716d6ebec280aea8fe0ee95b087acd20b0c655fc6d739993f": {
+      "family": "typedef_enumerator",
+      "source": "dangling_else_lookahead.if.c",
+      "edit": "duplicate",
+      "token": 25,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "4703a8a3e391a0c982981ee520aebd1b8143b3efdb9d96b925b52d629aff8359": {
+      "family": "typedef_enumerator",
+      "source": "function_parameter_scope_extends.c",
+      "edit": "delete",
+      "token": 26,
+      "spelling_hex": "54",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "7c004a5f63ae91d237885d2257bdadce36509a78175bb7dbc274c37882ca9932": {
+      "family": "duplicated_void",
+      "source": "block_scope.c",
+      "edit": "duplicate",
+      "token": 10,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "61992b7747e566bc76f2989b352a352894be89ae8d9e3046ea3e61d5b9885130": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "delete",
+      "token": 1876,
+      "spelling_hex": "636f6e7374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "a73bdb9b0e0acc83eb591c67e311f20ee241a1924ff623e111f9c056d8fb5855": {
+      "family": "scope_underflow_exception",
+      "source": "c-namespace.c",
+      "edit": "duplicate",
+      "token": 11,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "a355f6396e56dacc2e36e562c9889dc98eaf38b098055f1a76b7650a07a8f84c": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 52,
+      "spelling_hex": "2a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "41fa670e215066622d4afb8b2628f3478deefc35cabaf3a88b2e38bd604979ad": {
+      "family": "duplicated_void",
+      "source": "function-decls.c",
+      "edit": "duplicate",
+      "token": 56,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "3cf4a3eb8e2020cec197656bb4a3cd0d87e7b35b6f7b7c76af8d7dc69521d4df": {
+      "family": "declaration_without_declarator",
+      "source": "enum_shadows_typedef.c",
+      "edit": "delete",
+      "token": 2,
+      "spelling_hex": "54",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "bbf3770568c4d1b8c2646c6c962e4c62619fb0742d3615167d8d6d7f14e8cf8a": {
+      "family": "scope_underflow_exception",
+      "source": "dangling_else.c",
+      "edit": "duplicate",
+      "token": 24,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "59405a0efdbc07c825fe05f8c6a0f217117dd500e3d32ae7b56addf49d94a9ae": {
+      "family": "declaration_without_declarator",
+      "source": "types.c",
+      "edit": "delete",
+      "token": 2,
+      "spelling_hex": "58",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "f7665f70f49b9f56effa077ebbdced79a306e8aec93b0c45a739d6aeea069ff4": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 1139,
+      "spelling_hex": "225f5f69736f6339395f667363616e6622",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "68e747db34d844e2611f3fb4fa3718d019db388ef322d92f640f62940082855e": {
+      "family": "declaration_without_declarator",
+      "source": "long-long-struct.c",
+      "edit": "delete",
+      "token": 5,
+      "spelling_hex": "666f6f",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "d8e382ea9fc73e61380e2d0b59ad1337cbba94f7e48b3afbc915041d67e27e2c": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 158,
+      "spelling_hex": "453131",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "17743e27ac9716691765a6e055ae400da99f77a2142d2abcebadeaa17581f329": {
+      "family": "declaration_without_declarator",
+      "source": "c1x-alignas.c",
+      "edit": "delete",
+      "token": 20,
+      "spelling_hex": "6333",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "2d64c4410bad59ea448c5a4b0779be997b9da630a3d224c8351c7f51d6b0293d": {
+      "family": "typedef_spelled_label",
+      "source": "namespaces.c",
+      "edit": "duplicate",
+      "token": 7,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "f8d590855a6f8d2c418219db5589da38b7f4ac89c69f2db955aebe1f60276295": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 1575,
+      "spelling_hex": "5f5f7265737472696374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "0d03afbe9110c30bd00bd31cf152aef7c4d3af8e4bb9b6a0b166dfebce97a730": {
+      "family": "duplicated_void",
+      "source": "char-literal-printing.c",
+      "edit": "duplicate",
+      "token": 183,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "ef206cec58dd24e24ac6b071775ffa1cca3a7f4f6e7dbd7fb85b1fab759b360e": {
+      "family": "typedef_enumerator",
+      "source": "dangling_else_lookahead.if.c",
+      "edit": "duplicate",
+      "token": 3,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "4cea1e662bf2207289d22efa604a69dec54c90fed6d0fae35997ed9a2db9faba": {
+      "family": "scope_underflow_exception",
+      "source": "bitfield_declaration_ambiguity.c",
+      "edit": "duplicate",
+      "token": 18,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "e952be0fe291471faca9f281e2389746704bdd06a8ded2c4ca4516238deb31b3": {
+      "family": "scope_underflow_exception",
+      "source": "local_typedef.c",
+      "edit": "duplicate",
+      "token": 29,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "1846ff3e34e9ea728a9edc73dd55c3ef022c6b660cd5f8c5a670e189859e4a3c": {
+      "family": "scope_underflow_exception",
+      "source": "function_parameter_scope_extends.c",
+      "edit": "delete",
+      "token": 7,
+      "spelling_hex": "7b",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "89d1e75f196b7f39d5b7e7deb34e2f2de407ac9fe4aaedbaba187ced576b4159": {
+      "family": "scope_underflow_exception",
+      "source": "bitfield_declaration_ambiguity.ok.c",
+      "edit": "duplicate",
+      "token": 13,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "0bb9805b26c7a331074dd1f56d98aba283a4674644366b25af9d1f650d18c39a": {
+      "family": "scope_underflow_exception",
+      "source": "struct-recursion.c",
+      "edit": "duplicate",
+      "token": 18,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "3e681830a3ff62d1c702631718d6f6a8ab2612ebbf19222661d1c169b436846c": {
+      "family": "typedef_enumerator",
+      "source": "dangling_else_lookahead.if.c",
+      "edit": "duplicate",
+      "token": 29,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "dc1e997a47db6b86d81751c1103ec3a1146f770ba08ffeb90b7866e137b32df5": {
+      "family": "typedef_enumerator",
+      "source": "if_scopes.c",
+      "edit": "duplicate",
+      "token": 46,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "02e45d9375f8b085b377d005804b74223bfa60c78c5b0822c3fc8814e029d6dc": {
+      "family": "typedef_enumerator",
+      "source": "loop_scopes.c",
+      "edit": "duplicate",
+      "token": 85,
+      "spelling_hex": "2b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "d8166449f1a69dac7b6bbbb1a5a482867031eb8ffadd74db6ef64ec9095d8238": {
+      "family": "scope_underflow_exception",
+      "source": "function_parameter_scope_extends.c",
+      "edit": "duplicate",
+      "token": 9,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "0ffc087156d0f288536d097a06b3cb7f02e803292ca975a08b3066cc059eb7d1": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 588,
+      "spelling_hex": "2a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "17c0aca77906da7a4fb378ccbe9dfd71a3c6414e6462b53c5117b7b3a141491e": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 580,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "f08b2be9a698daf24f072b6053f0b88dd769c72d858221056b20973a8bd2a8e0": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 44,
+      "spelling_hex": "696e74",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "beac0798a129ae9a89617ce6ddc6c745b6b87a1ef664e105f17d81c1758ec273": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "duplicate",
+      "token": 25,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "aafc5c78fac209d4e829a6525d463e7a98c745538a54ee690407684b833e071f": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 332,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "b0f7803fdfb6d1f7153aada69822a350c246d31e37afac3e4826ef8427238655": {
+      "family": "initializer_binding_too_late",
+      "source": "declarator_visibility.c",
+      "edit": "delete",
+      "token": 6,
+      "spelling_hex": "54",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "275076f7bcd4b8792c83423b59260f0ebd40057f28afd4bbf17228160ecb4370": {
+      "family": "scope_underflow_exception",
+      "source": "designator.c",
+      "edit": "duplicate",
+      "token": 22,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "f676c91df6c4f05a059e79d987678d9be55e8a340ec289d345a607e8112e028a": {
+      "family": "missing_type_implicit_int",
+      "source": "bitfield_declaration_ambiguity.ok.c",
+      "edit": "delete",
+      "token": 15,
+      "spelling_hex": "696e74",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "628066b565083de9eff3804484cfcbe956b2639d4fc2e349b7df3c5203ebf4db": {
+      "family": "scope_underflow_exception",
+      "source": "function_parameter_scope.c",
+      "edit": "duplicate",
+      "token": 20,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "ef5e290f1c4bc8dcd959c23b3bbaf957f1c94c47239486472b1ee21d16c17888": {
+      "family": "declaration_without_declarator",
+      "source": "declaration_ambiguity.c",
+      "edit": "duplicate",
+      "token": 18,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "470974c4be58c00191b0a151aa4c9f9634e2cdf2e5d5c47ca90612f449d56296": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 137,
+      "spelling_hex": "61",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "a7e7f2dbc4c23c0dcdc13222ee27de5e12b51b008f786d8963fec4be709c9595": {
+      "family": "scope_underflow_exception",
+      "source": "char-literal-printing.c",
+      "edit": "duplicate",
+      "token": 189,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "cf4d8c9fa76761a4d060cf5297dbb37d6980658e488276eea71e540b72a8901f": {
+      "family": "duplicated_void",
+      "source": "typedef_star.c",
+      "edit": "duplicate",
+      "token": 7,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "f9f38e0e86840ac0db542171aaf857c1706f9745143fe689b4b675234fe855c0": {
+      "family": "typedef_enumerator",
+      "source": "if_scopes.c",
+      "edit": "duplicate",
+      "token": 8,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "bfe288078445a230154518269ce477ff52c835369da2cc000779578faa9efcc7": {
+      "family": "duplicated_void",
+      "source": "function-decls.c",
+      "edit": "duplicate",
+      "token": 12,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "8f0ae33490bef2d50d4bc8ff65528d5c011d2c3377f484925925cdce48c23344": {
+      "family": "typedef_enumerator",
+      "source": "enum_constant_visibility.c",
+      "edit": "duplicate",
+      "token": 30,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "04e609c02cbf92c9144fb5e573cb6ff29a553f137f7172170be6239ccbe5de13": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "delete",
+      "token": 776,
+      "spelling_hex": "5f5f7265737472696374",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "d02232f184027f6ed750e39ac5e84315c0995981692f3ba035496da1668d8a6d": {
+      "family": "duplicated_void",
+      "source": "parameter_declaration_ambiguity.test.c",
+      "edit": "duplicate",
+      "token": 4,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "5313ae50f1b272e6d3b9901cf2f900bb3136b7c82509b8517a11f74c5696bd91": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "delete",
+      "token": 100,
+      "spelling_hex": "78797a",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "4fb52d7273b877120a561e355f566e294c8439f83e69b8b80717b9edf4356042": {
+      "family": "aggregate_names_exception",
+      "source": "namespaces.c",
+      "edit": "delete",
+      "token": 15,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AttributeError"
+      }
+    },
+    "9d266975792c0a94ceb4b12ac4f801d2d93307e9a87a6ea44793eb05c27e8f7f": {
+      "family": "duplicated_void",
+      "source": "statements.c",
+      "edit": "duplicate",
+      "token": 136,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "fab65b9c3e8269a701cf10946aa07c9f892dfc660c0f29a85899c0c4edfb1707": {
+      "family": "duplicated_void",
+      "source": "local_scope.c",
+      "edit": "duplicate",
+      "token": 4,
+      "spelling_hex": "766f6964",
+      "pycparser": {
+        "accepted": true,
+        "valid_result": true
+      }
+    },
+    "9b5225e0be888c38a115a3b5a8c973cc3f8b99ee1aead0b307a441b4b246264d": {
+      "family": "scope_underflow_exception",
+      "source": "local_scope.c",
+      "edit": "duplicate",
+      "token": 27,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "0e563b371b3bcfcdd9c7a18af944aed68109c1394ccb4d8b24dd55dfb31d6fb8": {
+      "family": "vla_leading_dereference",
+      "source": "declarators.c",
+      "edit": "duplicate",
+      "token": 63,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "4122c27bc4f6243c61454d0262a1756bc273fcf5581232973b4b6f9cd6784044": {
+      "family": "declaration_without_declarator",
+      "source": "block_scope.c",
+      "edit": "delete",
+      "token": 23,
+      "spelling_hex": "78",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "566d08be8d8d7d2568b6047089349578c31656842479e2561b9e1a50ecec193c": {
+      "family": "scope_underflow_exception",
+      "source": "enum.c",
+      "edit": "duplicate",
+      "token": 8,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    },
+    "5fbeaca626248a846fb1f37786bc4f4b6d48421ae068b93485dd9ed773e2e34b": {
+      "family": "typedef_enumerator",
+      "source": "no_local_scope.c",
+      "edit": "duplicate",
+      "token": 38,
+      "spelling_hex": "3b",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "459ad7cf48752b9867e26a5d6c6d278dee77683386693473ee7104caa390e440": {
+      "family": "gnu_builtin_type_context",
+      "source": "enum-trick.c",
+      "edit": "duplicate",
+      "token": 175,
+      "spelling_hex": "6c6f6e67",
+      "pycparser": {
+        "accepted": false,
+        "valid_result": true
+      }
+    },
+    "fd1034ab21d08597c020d0afbc6891263b3e7dbd42afe56a620bd75fae96c586": {
+      "family": "scope_underflow_exception",
+      "source": "designator.c",
+      "edit": "duplicate",
+      "token": 43,
+      "spelling_hex": "7d",
+      "pycparser": {
+        "accepted": null,
+        "valid_result": false,
+        "exception": "AssertionError"
+      }
+    }
+  },
+  "baselines": {
+    "0845ff867bb22b0646afdb1eacba6c613059a4888e527cebb36c486b02c0da5a": {
+      "source": "dangling_else_lookahead.c",
+      "family": "for_scope_not_restored",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:5:5: before: x",
+        "valid_result": true
+      }
+    },
+    "971084050923fb5abab4607252b089c9487725c02da3d39675a4674cbfa9fd55": {
+      "source": "dangling_else_lookahead.if.c",
+      "family": "if_scope_not_restored",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:3:20: before: T",
+        "valid_result": true
+      }
+    },
+    "f62d21c7601e93a31e12859dcde5d7743290aeb272a0235ae0dc1c142888fc70": {
+      "source": "declaration_ambiguity.c",
+      "family": "declaration_without_declarator",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:3:3: Invalid declaration",
+        "valid_result": true
+      }
+    },
+    "1e41856552e94dca2cab8997a6e92af7cfdd4a64643e301e88267a931339bf2a": {
+      "source": "declarator_visibility.c",
+      "family": "initializer_binding_too_late",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c: Invalid expression",
+        "valid_result": true
+      }
+    },
+    "a68b352124a70702593d70d2566975723acecf610b88ecca4992cfe7a0a095da": {
+      "source": "declarators.c",
+      "family": "vla_leading_dereference",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:10:14: before: (",
+        "valid_result": true
+      }
+    },
+    "e79b1baf135e806c25e4b12cb38777816001961e62cd18b64376529b7365a471": {
+      "source": "enum-trick.c",
+      "family": "gnu_builtin_type_context",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:3:9: Missing type in declaration",
+        "valid_result": true
+      }
+    },
+    "5e2bbf212fdc75a0b8722e57d2a32e825c3af804e92892e248655c4af63fc29d": {
+      "source": "enum_constant_visibility.c",
+      "family": "typedef_enumerator",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:4:14: before: T",
+        "valid_result": true
+      }
+    },
+    "6b10101bbc46299a9da97cc3624951503bd8a5e1dce61f9cefaec268e7ac90c1": {
+      "source": "enum_shadows_typedef.c",
+      "family": "typedef_enumerator",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:3:23: before: T",
+        "valid_result": true
+      }
+    },
+    "718a7774f1083f7168a1b6d5f7cc4203944bda4dde2979e6e00f6345da50c5c4": {
+      "source": "expressions.c",
+      "family": "sizeof_compound_literal",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:2:19: before: {",
+        "valid_result": true
+      }
+    },
+    "3186a8d3e7dac233ec4dccd75310833027fc58e2bd96daf59ebfa816ca59b811": {
+      "source": "function_parameter_scope.c",
+      "family": "typedef_enumerator",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:2:25: before: U",
+        "valid_result": true
+      }
+    },
+    "9b46548adcd8973a7b0f4b9e794a34155949b199db519685344a16c97618fe1b": {
+      "source": "function_parameter_scope_extends.c",
+      "family": "typedef_enumerator",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:2:25: before: U",
+        "valid_result": true
+      }
+    },
+    "3a0a9046b4cb984cbd9b99eb5cac7aaf6577bd1fb9398c53ae21779b5964db78": {
+      "source": "if_scopes.c",
+      "family": "typedef_enumerator",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:4:19: before: T",
+        "valid_result": true
+      }
+    },
+    "0c4b3233750c244d0d2ff5b38bad2f6da474fcce6bd9c085cfe477ebdbd71b95": {
+      "source": "loop_scopes.c",
+      "family": "typedef_enumerator",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:4:31: before: U",
+        "valid_result": true
+      }
+    },
+    "a9b0865934a724bdb83728d0db55b9c0714a8278c1d5f2bc82d02f517ec816cb": {
+      "source": "namespaces.c",
+      "family": "typedef_spelled_label",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:6:3: Invalid declaration",
+        "valid_result": true
+      }
+    },
+    "5be39cfdb096572a8c271cbe0c4ab875fbf1e011d709e00ebf26266d8e262e66": {
+      "source": "no_local_scope.c",
+      "family": "typedef_enumerator",
+      "pycparser": {
+        "accepted": false,
+        "diagnostic": "translation-unit.c:4:20: before: T",
+        "valid_result": true
+      }
+    }
+  }
+}

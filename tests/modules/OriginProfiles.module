@@ -1,0 +1,21 @@
+Module OriginProfiles {
+  Theory Base() { Empty Exports { E; } Terms { Foo . E ::= "x"; } }
+  Theory OtherBase() { Empty Exports { E; } Terms { Foo . E ::= "z"; } }
+  Theory Shared(b: Base) { b \/ b }
+  Theory RepeatedJoin() { Base() \/ Base() }
+  Theory RepeatedMeet() { Base() /\ Base() }
+  Theory RepeatedDifference() { Base() \ Base() }
+  Theory Independent() { Base() \/ OtherBase() }
+  Theory RenamedJoin(b: Base) {
+    b \/ { b Replacements { [] Foo . E => Bar . E ::= "y"; } }
+  }
+  Theory RenamedMeet(b: Base) {
+    b /\ { b Replacements { [] Foo . E => Bar . E ::= "y"; } }
+  }
+  Theory RenamedDifference(b: Base) {
+    b \ { b Replacements { [] Foo . E => Bar . E ::= "y"; } }
+  }
+  Theory WrongResult(b: Base) {
+    b Replacements { [] Foo . E => Bar . F ::= "y"; }
+  }
+}

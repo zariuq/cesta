@@ -1,0 +1,212 @@
+{
+  "authority": "N1570 clause 6 and normative Annex D; source dialect is a compatibility/reference adapter, not a canonical final module format.",
+  "native_category_names": {
+    "Expr": "expression",
+    "Expr1": "assignment-expression",
+    "Expr2": "conditional-expression",
+    "Expr3": "logical-OR-expression",
+    "Expr4": "logical-AND-expression",
+    "Expr5": "inclusive-OR-expression",
+    "Expr6": "exclusive-OR-expression",
+    "Expr7": "AND-expression",
+    "Expr8": "equality-expression",
+    "Expr9": "relational-expression",
+    "Expr10": "shift-expression",
+    "Expr11": "additive-expression",
+    "Expr12": "multiplicative-expression",
+    "Expr13": "cast-expression",
+    "Expr14": "unary-expression",
+    "Expr15": "postfix-expression",
+    "Expr16": "primary-expression",
+    "GenericAssociation": "generic-association",
+    "Declaration": "declaration",
+    "DeclarationSpecifiers": "declaration-specifiers",
+    "TypeSpecifier": "type-specifier",
+    "UniqueTypeSpecifier": "type-specifier",
+    "PrimitiveTypeSpecifier": "type-specifier",
+    "StorageClass": "storage-class-specifier",
+    "StructSpecifier": "struct-or-union-specifier",
+    "StructOrUnion": "struct-or-union",
+    "StructDeclaration": "struct-declaration",
+    "SpecifierQualifiers": "specifier-qualifier-list",
+    "StructDeclarator": "struct-declarator",
+    "EnumSpecifier": "enum-specifier",
+    "Enumerator": "enumerator",
+    "TypeQualifier": "type-qualifier",
+    "FunctionSpecifier": "function-specifier",
+    "AlignmentSpecifier": "alignment-specifier",
+    "Declarator": "declarator",
+    "DirectDeclarator": "direct-declarator",
+    "Pointer": "pointer",
+    "ParameterTypeList": "parameter-type-list",
+    "Parameter": "parameter-declaration",
+    "TypeName": "type-name",
+    "AbstractDeclarator": "abstract-declarator",
+    "DirectAbstractDeclarator": "direct-abstract-declarator",
+    "Initializer": "initializer",
+    "InitializerElement": "@initializer-element",
+    "InitDeclarator": "init-declarator",
+    "Designator": "designator",
+    "StaticAssertion": "static_assert-declaration",
+    "Statement": "statement",
+    "LabeledStatement": "labeled-statement",
+    "Block": "compound-statement",
+    "BlockItem": "block-item",
+    "SelectionStatement": "selection-statement",
+    "IterationStatement": "iteration-statement",
+    "JumpStatement": "jump-statement",
+    "TranslationUnit": "translation-unit",
+    "ExternalDeclaration": "external-declaration",
+    "FunctionDefinition": "function-definition",
+    "CIdent": "identifier",
+    "CInteger": "integer-constant",
+    "CFloat": "floating-constant",
+    "CCharacter": "character-constant",
+    "CString": "@string-literal-atom"
+  },
+  "optional_categories": {
+    "Arguments": "argument-expression-list",
+    "OptionalInitDeclarators": "init-declarator-list",
+    "OptionalIdent": "identifier",
+    "OptionalStructDeclarators": "struct-declarator-list",
+    "OptionalDeclarator": "declarator",
+    "OptionalTypeQualifiers": "type-qualifier-list",
+    "OptionalIdentifiers": "identifier-list",
+    "OptionalExpression": "assignment-expression",
+    "OptionalAbstractDeclarator": "abstract-declarator",
+    "OptionalParameterTypes": "parameter-type-list",
+    "OptionalFullExpression": "expression"
+  },
+  "plain_aliases": {
+    "BoundDeclarator": "declarator",
+    "OldParameterName": "identifier"
+  },
+  "namespace_categories": {
+    "ordinary": "COrdinaryName",
+    "typedef": "CTypedefName",
+    "general": "CGeneralName",
+    "general_typedef": "CGeneralTypedefName",
+    "token": "CIdent",
+    "ordinary_marker": "<ordinary-name>",
+    "typedef_marker": "<typedef-name>"
+  },
+  "standard_list_categories": [
+    "generic-assoc-list",
+    "argument-expression-list",
+    "init-declarator-list",
+    "struct-declaration-list",
+    "struct-declarator-list",
+    "enumerator-list",
+    "type-qualifier-list",
+    "parameter-list",
+    "identifier-list",
+    "initializer-list",
+    "designator-list",
+    "block-item-list",
+    "translation-unit",
+    "declaration-list"
+  ],
+  "inline_standard_categories": [
+    "constant",
+    "enumeration-constant",
+    "generic-selection",
+    "unary-operator",
+    "assignment-operator",
+    "constant-expression",
+    "atomic-type-specifier",
+    "typedef-name",
+    "designation",
+    "expression-statement"
+  ],
+  "constraint_partitions": [
+    {
+      "standard": "declaration-specifiers",
+      "root": "DeclarationSpecifiers",
+      "unique": "UniqueTypeSpecifier",
+      "primitive": "PrimitiveTypeSpecifier",
+      "non_type": "NonTypeSpecifier",
+      "tail": "PrimitiveOrNonTypeSpecifier",
+      "native_categories": [
+        "DeclarationSpecifiers",
+        "NonTypeSpecifier",
+        "PrimitiveOrNonTypeSpecifier"
+      ],
+      "constraint": "6.7.2p2",
+      "condition": "At least one type; one unique type and no primitive type, or one-or-more primitive types and no unique type. Full primitive multiset constraints remain external."
+    },
+    {
+      "standard": "specifier-qualifier-list",
+      "root": "SpecifierQualifiers",
+      "unique": "UniqueTypeSpecifier",
+      "primitive": "PrimitiveTypeSpecifier",
+      "non_type": "TypeQualifier",
+      "tail": "PrimitiveOrQualifier",
+      "native_categories": [
+        "SpecifierQualifiers",
+        "PrimitiveOrQualifier"
+      ],
+      "constraint": "6.7.2p2",
+      "condition": "Same partial type condition with qualifiers as the only non-type specifier class."
+    }
+  ],
+  "unique_standard_type_alternatives": [
+    "void",
+    "_Bool",
+    "atomic-type-specifier",
+    "struct-or-union-specifier",
+    "enum-specifier",
+    "typedef-name"
+  ],
+  "phase6_string_lists": {
+    "clause": "6.4.5p5",
+    "condition": "A grammar use of the final string-literal token corresponds to a nonempty ordered list of raw token spellings; prefix compatibility and execution encoding are external."
+  },
+  "byte_carrier_profile": {
+    "literal_excluded_bytes": [
+      0,
+      10,
+      13
+    ],
+    "identifier_encoding": "UTF-8 and UCNs; both use Annex D.1, minus D.2 initially.",
+    "literal_ucn_scalar_ranges": [
+      [
+        36,
+        36
+      ],
+      [
+        64,
+        64
+      ],
+      [
+        96,
+        96
+      ],
+      [
+        160,
+        55295
+      ],
+      [
+        57344,
+        1114111
+      ]
+    ],
+    "constraints": [
+      "6.4.2.1p3",
+      "6.4.3p2",
+      "Annex D.1",
+      "Annex D.2"
+    ],
+    "condition": "Preprocessed byte carrier; physical LF/CR/NUL are not ordinary literal payload bytes. Native codec escaping is checked separately."
+  },
+  "cpp_number_guard": {
+    "clause": "6.4p4 / 6.4.8",
+    "condition": "A conservative rejected-token guard: contains the normative pp-number language; valid integer/float rules win equal-length ties; the guard has no successful phrase rule. Broad byte continuation may overapproximate malformed source."
+  },
+  "claims_excluded": [
+    "Native module activation and import/origin adequacy",
+    "Native DFA/LR implementation correctness",
+    "Scope-hook and conflict-policy correctness",
+    "C typing and execution semantics",
+    "Byte escaping and compiler correspondence"
+  ]
+}

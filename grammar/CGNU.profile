@@ -1,0 +1,21 @@
+profile CGNU;
+include "C11.profile";
+-- GNU __auto_type keeps the outer name visible throughout the initializer.
+scope deferred "GNUAutoType" "UniqueTypeSpecifier";
+-- Preprocessing retains these implementation directives as complete lines.
+layout token CPragma line;
+-- Target/compiler predefined type names; classified through the same scope hook.
+initial typedef "__builtin_va_list";
+initial typedef "__builtin_ms_va_list";
+initial typedef "__int128_t";
+initial typedef "__uint128_t";
+-- A following attribute attaches to the immediately preceding struct/declarator.
+conflict "__attribute__" prefer shift over reduce "StructType" "UniqueTypeSpecifier";
+conflict "__attribute" prefer shift over reduce "StructType" "UniqueTypeSpecifier";
+conflict "__attribute__" prefer shift over reduce "Declarator" "Declarator";
+conflict "__attribute" prefer shift over reduce "Declarator" "Declarator";
+conflict "__attribute__" prefer shift over reduce "PointerDeclarator" "Declarator";
+conflict "__attribute" prefer shift over reduce "PointerDeclarator" "Declarator";
+-- The C11 typedef-parameter interpretation extends through GNU attributes.
+conflict "__attribute__" prefer reduce "TypedefType" "UniqueTypeSpecifier" over reduce "_" "CGeneralTypedefName";
+conflict "__attribute" prefer reduce "TypedefType" "UniqueTypeSpecifier" over reduce "_" "CGeneralTypedefName";

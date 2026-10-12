@@ -1,0 +1,136 @@
+(c:TranslationUnit
+  (c:List
+    (c:ExternalDeclaration
+      (c:Declaration
+        (c:PrimitiveDeclarationSpecifiers
+          (c:Int)
+          (c:List))
+        (c:InitDeclarators
+          (c:List
+            (c:InitDeclarator
+              (c:Declarator
+                (c:FunctionDeclarator
+                  (c:NameDeclarator printf)
+                  (c:VariadicParameterTypes
+                    (c:List
+                      (c:NamedParameter
+                        (c:PrefixedDeclarationSpecifiers
+                          (c:QualifierSpecifier
+                            (c:Const))
+                          (c:PrimitiveDeclarationSpecifiers
+                            (c:Char)
+                            (c:List)))
+                        (c:PointerDeclarator
+                          (c:Pointer
+                            (c:NoTypeQualifiers))
+                          (c:NameDeclarator format))))))))))))
+    (c:ExternalFunction
+      (c:FunctionDefinition
+        (c:PrimitiveDeclarationSpecifiers
+          (c:Int)
+          (c:List))
+        (c:Declarator
+          (c:FunctionDeclarator
+            (c:NameDeclarator main)
+            (c:ParameterTypes
+              (c:List
+                (c:AbstractParameter
+                  (c:UniqueDeclarationSpecifiers
+                    (c:Void)
+                    (c:List))
+                  (c:NoAbstractDeclarator))))))
+        (c:List)
+        (c:Block
+          (c:List
+            (c:BlockDeclaration
+              (c:Declaration
+                (c:PrimitiveDeclarationSpecifiers
+                  (c:Unsigned)
+                  (c:List))
+                (c:InitDeclarators
+                  (c:List
+                    (c:InitDeclaratorValue
+                      (c:Declarator
+                        (c:ArrayDeclarator
+                          (c:NameDeclarator values)
+                          (c:NoTypeQualifiers)
+                          (c:SomeExpression
+                            (c:IntConst "4"))))
+                      (c:InitializerList
+                        (c:List
+                          (c:InitializerElement
+                            (c:InitializerExpression
+                              (c:IntConst "1u")))
+                          (c:InitializerElement
+                            (c:InitializerExpression
+                              (c:IntConst "2u")))
+                          (c:InitializerElement
+                            (c:InitializerExpression
+                              (c:IntConst "3u")))
+                          (c:InitializerElement
+                            (c:InitializerExpression
+                              (c:IntConst "4u"))))))))))
+            (c:BlockDeclaration
+              (c:Declaration
+                (c:PrimitiveDeclarationSpecifiers
+                  (c:Unsigned)
+                  (c:List))
+                (c:InitDeclarators
+                  (c:List
+                    (c:InitDeclaratorValue
+                      (c:Declarator
+                        (c:NameDeclarator sum))
+                      (c:InitializerExpression
+                        (c:IntConst "0u")))))))
+            (c:BlockStatement
+              (c:IterationStatement
+                (c:ForDeclaration
+                  (c:Declaration
+                    (c:PrimitiveDeclarationSpecifiers
+                      (c:Unsigned)
+                      (c:List))
+                    (c:InitDeclarators
+                      (c:List
+                        (c:InitDeclaratorValue
+                          (c:PointerDeclarator
+                            (c:Pointer
+                              (c:NoTypeQualifiers))
+                            (c:NameDeclarator p))
+                          (c:InitializerExpression
+                            (c:Var values))))))
+                  (c:SomeFullExpression
+                    (c:Less
+                      (c:Var p)
+                      (c:Add
+                        (c:Var values)
+                        (c:IntConst "4"))))
+                  (c:SomeFullExpression
+                    (c:PreIncrement
+                      (c:Var p)))
+                  (c:CompoundStatement
+                    (c:Block
+                      (c:List
+                        (c:BlockStatement
+                          (c:ExpressionStatement
+                            (c:SomeFullExpression
+                              (c:AddAssign
+                                (c:Var sum)
+                                (c:Indirection
+                                  (c:Var p))))))))))))
+            (c:BlockStatement
+              (c:ExpressionStatement
+                (c:SomeFullExpression
+                  (c:Call
+                    (c:Var printf)
+                    (c:Arguments
+                      (c:List
+                        (c:StringLiterals
+                          (c:List "\"%u\\n\""))
+                        (c:Var sum)))))))
+            (c:BlockStatement
+              (c:JumpStatement
+                (c:Return
+                  (c:SomeFullExpression
+                    (c:NotEqual
+                      (c:Var sum)
+                      (c:IntConst "10u"))))))))))))

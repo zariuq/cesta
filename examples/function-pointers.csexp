@@ -1,0 +1,173 @@
+(c:TranslationUnit
+  (c:List
+    (c:ExternalDeclaration
+      (c:Declaration
+        (c:PrimitiveDeclarationSpecifiers
+          (c:Int)
+          (c:List))
+        (c:InitDeclarators
+          (c:List
+            (c:InitDeclarator
+              (c:Declarator
+                (c:FunctionDeclarator
+                  (c:NameDeclarator printf)
+                  (c:VariadicParameterTypes
+                    (c:List
+                      (c:NamedParameter
+                        (c:PrefixedDeclarationSpecifiers
+                          (c:QualifierSpecifier
+                            (c:Const))
+                          (c:PrimitiveDeclarationSpecifiers
+                            (c:Char)
+                            (c:List)))
+                        (c:PointerDeclarator
+                          (c:Pointer
+                            (c:NoTypeQualifiers))
+                          (c:NameDeclarator format))))))))))))
+    (c:ExternalFunction
+      (c:FunctionDefinition
+        (c:PrimitiveDeclarationSpecifiers
+          (c:Unsigned)
+          (c:List))
+        (c:Declarator
+          (c:FunctionDeclarator
+            (c:NameDeclarator plus_one)
+            (c:ParameterTypes
+              (c:List
+                (c:NamedParameter
+                  (c:PrimitiveDeclarationSpecifiers
+                    (c:Unsigned)
+                    (c:List))
+                  (c:Declarator
+                    (c:NameDeclarator x)))))))
+        (c:List)
+        (c:Block
+          (c:List
+            (c:BlockStatement
+              (c:JumpStatement
+                (c:Return
+                  (c:SomeFullExpression
+                    (c:Add
+                      (c:Var x)
+                      (c:IntConst "1u"))))))))))
+    (c:ExternalFunction
+      (c:FunctionDefinition
+        (c:PrimitiveDeclarationSpecifiers
+          (c:Unsigned)
+          (c:List))
+        (c:Declarator
+          (c:FunctionDeclarator
+            (c:NameDeclarator plus_two)
+            (c:ParameterTypes
+              (c:List
+                (c:NamedParameter
+                  (c:PrimitiveDeclarationSpecifiers
+                    (c:Unsigned)
+                    (c:List))
+                  (c:Declarator
+                    (c:NameDeclarator x)))))))
+        (c:List)
+        (c:Block
+          (c:List
+            (c:BlockStatement
+              (c:JumpStatement
+                (c:Return
+                  (c:SomeFullExpression
+                    (c:Add
+                      (c:Var x)
+                      (c:IntConst "2u"))))))))))
+    (c:ExternalFunction
+      (c:FunctionDefinition
+        (c:PrimitiveDeclarationSpecifiers
+          (c:Int)
+          (c:List))
+        (c:Declarator
+          (c:FunctionDeclarator
+            (c:NameDeclarator main)
+            (c:ParameterTypes
+              (c:List
+                (c:AbstractParameter
+                  (c:UniqueDeclarationSpecifiers
+                    (c:Void)
+                    (c:List))
+                  (c:NoAbstractDeclarator))))))
+        (c:List)
+        (c:Block
+          (c:List
+            (c:BlockDeclaration
+              (c:Declaration
+                (c:PrimitiveDeclarationSpecifiers
+                  (c:Unsigned)
+                  (c:List))
+                (c:InitDeclarators
+                  (c:List
+                    (c:InitDeclaratorValue
+                      (c:Declarator
+                        (c:FunctionDeclarator
+                          (c:ParenthesizedDeclarator
+                            (c:PointerDeclarator
+                              (c:Pointer
+                                (c:NoTypeQualifiers))
+                              (c:ArrayDeclarator
+                                (c:NameDeclarator ops)
+                                (c:NoTypeQualifiers)
+                                (c:SomeExpression
+                                  (c:IntConst "2")))))
+                          (c:ParameterTypes
+                            (c:List
+                              (c:AbstractParameter
+                                (c:PrimitiveDeclarationSpecifiers
+                                  (c:Unsigned)
+                                  (c:List))
+                                (c:NoAbstractDeclarator))))))
+                      (c:InitializerList
+                        (c:List
+                          (c:InitializerElement
+                            (c:InitializerExpression
+                              (c:Var plus_one)))
+                          (c:InitializerElement
+                            (c:InitializerExpression
+                              (c:Var plus_two))))))))))
+            (c:BlockDeclaration
+              (c:Declaration
+                (c:PrimitiveDeclarationSpecifiers
+                  (c:Unsigned)
+                  (c:List))
+                (c:InitDeclarators
+                  (c:List
+                    (c:InitDeclaratorValue
+                      (c:Declarator
+                        (c:NameDeclarator value))
+                      (c:InitializerExpression
+                        (c:Add
+                          (c:Call
+                            (c:Subscript
+                              (c:Var ops)
+                              (c:IntConst "0"))
+                            (c:Arguments
+                              (c:List
+                                (c:IntConst "5u"))))
+                          (c:Call
+                            (c:Subscript
+                              (c:Var ops)
+                              (c:IntConst "1"))
+                            (c:Arguments
+                              (c:List
+                                (c:IntConst "5u")))))))))))
+            (c:BlockStatement
+              (c:ExpressionStatement
+                (c:SomeFullExpression
+                  (c:Call
+                    (c:Var printf)
+                    (c:Arguments
+                      (c:List
+                        (c:StringLiterals
+                          (c:List "\"%u\\n\""))
+                        (c:Var value)))))))
+            (c:BlockStatement
+              (c:JumpStatement
+                (c:Return
+                  (c:SomeFullExpression
+                    (c:NotEqual
+                      (c:Var value)
+                      (c:IntConst "13u"))))))))))))

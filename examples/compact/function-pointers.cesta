@@ -1,0 +1,10 @@
+(unit
+  (var int (function printf ((const char) (* format)) ...))
+  (fn unsigned increment ((unsigned x)) (return (+ x 1u)))
+  (fn unsigned twice ((unsigned x)) (return (* x 2u)))
+  (fn int main (void)
+    (var unsigned (fnptr-array operations 2 unsigned) (init increment twice))
+    (var unsigned (fnptr selected unsigned) ([] operations 1))
+    (var unsigned result (+ (call ([] operations 0) 4u) (call selected 4u)))
+    (call printf "%u\n" result)
+    (return (!= result 13u))))
