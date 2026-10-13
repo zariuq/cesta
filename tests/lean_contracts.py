@@ -25,6 +25,10 @@ PRESENTATION_MODULES = [
     "Mettapedia.GSLT.Parsing.SortedTreePresentationTemplates",
     "Mettapedia.GSLT.Parsing.PreparedSortedCodecSchema",
 ]
+TYPE_MODULES = [
+    "Mettapedia.Languages.C11.ArithmeticConversions",
+    "Mettapedia.Languages.C11.TypeLanguage",
+]
 ALLOWED_AXIOMS = {"propext","Classical.choice","Quot.sound"}
 
 
@@ -70,7 +74,7 @@ def main():
         lean += ["-M",str(args.lean_memory_mb)]
     files,theorems,imports = [],[],[]
     started = time.monotonic()
-    groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES]
+    groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES]
     for group in groups:
         for name in group:
             source = project / (name.replace(".","/")+".lean")
@@ -111,7 +115,7 @@ def main():
         raise RuntimeError("the named theorem audit did not account for every declaration")
     summary = {"modules":files,"named_theorems":len(theorems),"axioms":dependencies,
                "seconds":round(time.monotonic()-started,2),
-               "boundary":"These generic codec, module-algebra, projection, admission and checked-presentation proofs do not prove the native C parser, scope hook, byte wire format, native compact adapter or C compiler semantics."}
+               "boundary":"These generic codec, module-algebra, projection, admission and checked-presentation proofs, and the C11 arithmetic and type-compatibility models, do not prove the native C parser, scope hook, binder, elaborator, byte wire format, native compact adapter or C compiler semantics."}
     (output / "summary.json").write_text(json.dumps(summary,indent=2)+"\n")
     print(f"Lean contracts: {len(files)} strict module checks; {len(theorems)} named theorem axiom audits; {summary['seconds']}s")
 

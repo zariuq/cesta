@@ -193,6 +193,7 @@ Module CompactCPresentation {
       StatementDefault . Statement ::= "(" "default" Statement ")";
       StatementGNUIndirectGoto . Statement ::= "(" "goto*" Expr ")";
       StatementGNUCaseRange . Statement ::= "(" "case-range" Expr Expr Statement ")";
+      StatementGNUAttributedLabel . Statement ::= "(" "attributed-label" CGeneralName [GNUAttribute] Statement ")";
       VariableName . Declaration ::= "(" "var" DeclarationSpecifiers Declarator ")";
       VariableValue . Declaration ::= "(" "var" DeclarationSpecifiers Declarator Initializer ")";
       BlockVariableName . BlockItem ::= "(" "var" DeclarationSpecifiers Declarator ")";
@@ -491,6 +492,7 @@ Module CompactCPresentation {
       GNULabelAddress . Expr14 ::= "(" "label-address" CGeneralName ")";
       GNUIndirectGoto . JumpStatement ::= "(" "indirect-goto" Expr ")";
       GNUCaseRange . LabeledStatement ::= "(" "case-range" Expr2 Expr2 Statement ")";
+      GNUAttributedLabel . LabeledStatement ::= "(" "attributed-label" CGeneralName [GNUAttribute] Statement ")";
       GNUEmptyStruct . StructSpecifier ::= "(" "empty-struct" StructOrUnion OptionalIdent ")";
       GNUEmptyTranslationUnit . TranslationUnit ::= "(" "empty-translation-unit" ")";
       EscapedVariable . Expr ::= "(" "id" COrdinaryName ")";
@@ -529,6 +531,7 @@ Module CompactCPresentation {
       (StatementDefault a) == (LabeledStatement (Default a));
       (StatementGNUIndirectGoto a) == (JumpStatement (GNUIndirectGoto a));
       (StatementGNUCaseRange a b c) == (LabeledStatement (GNUCaseRange a b c));
+      (StatementGNUAttributedLabel a b c) == (LabeledStatement (GNUAttributedLabel a b c));
       (StatementBreak) == (JumpStatement (Break));
       (StatementContinue) == (JumpStatement (Continue));
       (VariableName a b) == (Declaration a (InitDeclarators (List (InitDeclarator b))));

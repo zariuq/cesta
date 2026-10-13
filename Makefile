@@ -6,13 +6,15 @@ REFERENCE_SYNTAX ?= ../hyperon/MeTTaIL/GSLT/src/main/bnfc/metta_venus.cf
 REFERENCE_FIXTURES ?= ../hyperon/MeTTaIL/GSLT/src/test/module
 CETTA_SOURCE ?= ../hyperon/CeTTa/src
 C11PARSER_TESTS ?= ../repos/C11parser/tests
-LIBSOURCES = src/base.c src/atom.c src/wire.c src/grammar.c src/dfa.c src/forest.c src/lr.c src/scope.c src/tree.c src/module.c src/compile.c src/metadata.c src/view.c
+LIBSOURCES = src/base.c src/atom.c src/wire.c src/grammar.c src/dfa.c src/forest.c src/lr.c src/scope.c src/tree.c src/module.c src/compile.c src/metadata.c src/view.c src/bind.c src/ctype.c src/elaborate.c
 SOURCES = $(LIBSOURCES) src/main.c
 
 .PHONY: all test test-reference test-c test-examples test-driver test-literal-bytes
 all: build/cesta
 
-build/cesta-bootstrap: $(SOURCES) src/cesta.h
+build/test-foundation build/test-modules build/test-c-scope build/test-grammar-trees build/syntax-probe build/test-presentations build/test-presentation-coverage build/test-whole-program-trees: src/sema.h
+
+build/cesta-bootstrap: $(SOURCES) src/cesta.h src/sema.h
 	mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) $(SOURCES) -o $@
 
@@ -20,11 +22,11 @@ build/embed: tools/embed.c
 	mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) $< -o $@
 
-build/language-data.c: build/embed build/C11.cf build/CGNU.cf grammar/TheoryModule.cf grammar/C11.profile grammar/CGNU.profile grammar/CGNUC11.profile presentations/CompactC.module presentations/CompactC2.module presentations/CMeraStyle.module
-	./build/embed C11Grammar build/C11.cf CGNUGrammar build/CGNU.cf TheoryModuleSyntax grammar/TheoryModule.cf C11Profile grammar/C11.profile CGNUProfile grammar/CGNU.profile CGNUC11Profile grammar/CGNUC11.profile CompactCModule presentations/CompactC.module CompactC2Module presentations/CompactC2.module CMeraStyleModule presentations/CMeraStyle.module > $@
+build/language-data.c: build/embed build/C11.cf build/CGNU.cf grammar/TheoryModule.cf grammar/C11.profile grammar/CGNU.profile grammar/CGNUC11.profile grammar/CClang.profile grammar/CClangC11.profile presentations/CompactC.module presentations/CompactC2.module presentations/CMeraStyle.module
+	./build/embed C11Grammar build/C11.cf CGNUGrammar build/CGNU.cf TheoryModuleSyntax grammar/TheoryModule.cf C11Profile grammar/C11.profile CGNUProfile grammar/CGNU.profile CGNUC11Profile grammar/CGNUC11.profile CClangProfile grammar/CClang.profile CClangC11Profile grammar/CClangC11.profile CompactCModule presentations/CompactC.module CompactC2Module presentations/CompactC2.module CMeraStyleModule presentations/CMeraStyle.module > $@
 
-build/cesta: $(SOURCES) src/cesta.h src/driver.c src/view_driver.c build/language-data.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/view_driver.c build/language-data.c -o $@
+build/cesta: $(SOURCES) src/cesta.h src/sema.h src/driver.c src/view_driver.c src/sema.c build/language-data.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/view_driver.c src/sema.c build/language-data.c -o $@
 
 build/test-foundation: tests/foundation.c $(LIBSOURCES) src/cesta.h
 	mkdir -p build
@@ -228,3 +230,31 @@ test-presentation-semantics: build/cesta
 	python3 -B tests/presentation_semantics.py
 
 test: test-presentation-semantics
+
+.PHONY: test-semantics test-semantic-corpora test-type-admission
+test-semantics: build/cesta
+	python3 -B tests/semantic_controls.py
+
+test: test-semantics
+
+test-semantic-corpora: build/cesta
+	python3 -B tests/semantic_corpus.py $(SEMANTIC_CORPUS_TEST_FLAGS)
+
+test: test-semantic-corpora
+
+test-type-admission: test-semantic-corpora test-lean
+	python3 -B tests/type_admission.py $(TYPE_ADMISSION_TEST_FLAGS)
+
+test: test-type-admission
+
+.PHONY: check test-qualification-controls test-foundation
+test-foundation: build/test-foundation
+	./build/test-foundation
+
+test-qualification-controls:
+	python3 -B tests/qualification_controls.py
+
+test: test-qualification-controls
+
+# Local controls; `test` retains corpus and kernel qualification.
+check: test-foundation test-modules test-c test-presentations test-presentation-coverage test-semantics test-qualification-controls

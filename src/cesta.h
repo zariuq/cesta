@@ -203,6 +203,7 @@ void ce_scope_free(CeScope *scope);
 bool ce_scope_typedef(const CeScope *scope, CeText name);
 bool ce_scope_hook(CeScope *scope, unsigned action, int node, CeError *error);
 bool ce_scope_closed(const CeScope *scope, CeError *error);
+CeText ce_name_key(CeArena *arena, CeText name);
 
 typedef struct CeTree {
     int symbol, production;
@@ -241,6 +242,8 @@ int ce_execute_stdout(char *const *argv, CeArena *arena, CeText *out, CeError *e
 int ce_cc(int argc, char **argv);
 int ce_source_command(int argc, char **argv, unsigned composition);
 bool ce_builtin_language(CeGrammar *grammar, bool gnu, CeError *error);
+bool ce_builtin_dialect(CeGrammar *grammar, bool gnu, bool clang, CeError *error);
+int ce_sema_command(int argc, char **argv);
 
 typedef struct { CeTree *tree; uint64_t origin; } CeDefinition;
 typedef struct {

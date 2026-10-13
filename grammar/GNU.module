@@ -113,6 +113,9 @@ Module GNUCModule {
       GNULabelAddress . Expr14 ::= "&&" CGeneralName;
       GNUIndirectGoto . JumpStatement ::= "goto" "*" Expr ";";
       GNUCaseRange . LabeledStatement ::= "case" Expr2 "..." Expr2 ":" Statement;
+      -- Label attributes: GCC reads any number of attribute specifiers after the colon.
+      separator nonempty GNUAttribute "";
+      GNUAttributedLabel . LabeledStatement ::= CGeneralName ":" [GNUAttribute] Statement;
       GNUEmptyStruct . StructSpecifier ::= StructOrUnion OptionalIdent "{" "}";
       GNUEmptyTranslationUnit . TranslationUnit ::=;
     }

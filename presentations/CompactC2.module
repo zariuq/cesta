@@ -108,6 +108,7 @@ Module CompactC2Presentation {
       StatementLabel . Statement ::= "(" "label" CGeneralName Statement ")";
       StatementCase . Statement ::= "(" "case" Expr2 Statement ")";
       StatementCaseRange . Statement ::= "(" "case" Expr2 "..." Expr2 Statement ")";
+      StatementAttributedLabel . Statement ::= "(" "label" CGeneralName [GNUAttribute] Statement ")";
       StatementDefault . Statement ::= "(" "default" Statement ")";
       Block . Block ::= "(" "block" [BlockItem] ")";
       NoFullExpression . OptionalFullExpression ::= "(" ")";
@@ -478,6 +479,7 @@ Module CompactC2Presentation {
       Label . LabeledStatement ::= "(" "label" CGeneralName Statement ")";
       Case . LabeledStatement ::= "(" "case" Expr2 Statement ")";
       GNUCaseRange . LabeledStatement ::= "(" "case" Expr2 "..." Expr2 Statement ")";
+      GNUAttributedLabel . LabeledStatement ::= "(" "label" CGeneralName [GNUAttribute] Statement ")";
       Default . LabeledStatement ::= "(" "default" Statement ")";
       If . SelectionStatement ::= "(" "if" Expr Statement ")";
       IfElse . SelectionStatement ::= "(" "if" Expr Statement Statement ")";
@@ -546,6 +548,7 @@ Module CompactC2Presentation {
       (StatementLabel a b) == (LabeledStatement (Label a b));
       (StatementCase a b) == (LabeledStatement (Case a b));
       (StatementCaseRange a b c) == (LabeledStatement (GNUCaseRange a b c));
+      (StatementAttributedLabel a b c) == (LabeledStatement (GNUAttributedLabel a b c));
       (StatementDefault a) == (LabeledStatement (Default a));
 
       (TypedefName a b) == (Declaration (PrefixedDeclarationSpecifiers (StorageSpecifier (Typedef)) a) (InitDeclarators (List (InitDeclarator b))));

@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
     }
     fputs("]\n",cases); fputs("]\n",counts); fclose(cases); fclose(counts);
     require(covered == constructors,"every original root constructor has a genuine short form");
-    require(constructors == 298,"complete supported constructor accounting");
+    require(constructors == 299,"complete supported constructor accounting");
     printf("presentation coverage: %zu/%zu original root constructors shortened; %llu/%llu total specimen constructors; %u checks\n",
         covered,constructors,(unsigned long long)shortened,(unsigned long long)nodes,checks);
     ce_view_free(&profile); ce_catalog_free(&catalog); ce_grammar_free(&syntax);

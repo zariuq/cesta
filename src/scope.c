@@ -38,7 +38,7 @@ static void bind(CeScope *scope, CeText name, bool is_typedef);
 
 /* A UCN and the corresponding source character denote the same C name.
    Scope keys normalize their encoding; syntax trees retain the spelling. */
-static CeText name_key(CeArena *arena, CeText name) {
+CeText ce_name_key(CeArena *arena, CeText name) {
     if (!memchr(name.data,'\\',name.len)) return name;
     unsigned char *key = ce_alloc(arena,name.len+1); size_t at = 0;
     for (size_t i = 0; i < name.len;) {
@@ -90,7 +90,7 @@ void ce_scope_free(CeScope *scope) {
     ce_arena_free(&scope->arena); free(scope->functions); free(scope);
 }
 bool ce_scope_typedef(const CeScope *scope, CeText name) {
-    CeArena arena = {0}; name = name_key(&arena,name); bool result = false;
+    CeArena arena = {0}; name = ce_name_key(&arena,name); bool result = false;
     for (const Binding *b = scope->bindings; b; b = b->previous)
         if (ce_equal(b->name,name)) { result = b->is_typedef; break; }
     ce_arena_free(&arena); return result;
@@ -102,7 +102,7 @@ bool ce_scope_closed(const CeScope *scope, CeError *error) {
 static void bind(CeScope *scope, CeText name, bool is_typedef) {
     if (!name.len) return;
     Binding *binding = ce_alloc(&scope->arena,sizeof(*binding));
-    *binding = (Binding){name_key(&scope->arena,name),is_typedef,scope->bindings}; scope->bindings = binding;
+    *binding = (Binding){ce_name_key(&scope->arena,name),is_typedef,scope->bindings}; scope->bindings = binding;
 }
 static void push(CeScope *scope, unsigned kind) {
     Mark *mark = ce_alloc(&scope->arena,sizeof(*mark));

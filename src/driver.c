@@ -11,6 +11,8 @@ CeText ce_builtin_CGNUGrammar(void);
 CeText ce_builtin_C11Profile(void);
 CeText ce_builtin_CGNUProfile(void);
 CeText ce_builtin_CGNUC11Profile(void);
+CeText ce_builtin_CClangProfile(void);
+CeText ce_builtin_CClangC11Profile(void);
 CeText ce_builtin_TheoryModuleSyntax(void);
 
 static bool suffix(const char *text, const char *end) {
@@ -33,14 +35,21 @@ static bool directories(char *path, CeError *error) {
     }
     return true;
 }
-bool ce_builtin_language(CeGrammar *g, bool gnu, CeError *error) {
+/* GCC's and Clang's GNU dialects differ lexically: Clang reads the
+   interchange floating type names as identifiers. */
+bool ce_builtin_dialect(CeGrammar *g, bool gnu, bool clang, CeError *error) {
     if (!ce_grammar_read(g,ce_builtin_CGNUGrammar(),error) || !ce_grammar_finish(g,error)) return false;
     CeProfileSource profiles[] = {
         {ce_cstr(&g->arena,"C11.profile"),ce_builtin_C11Profile()},
         {ce_cstr(&g->arena,"CGNU.profile"),ce_builtin_CGNUProfile()},
-        {ce_cstr(&g->arena,"CGNUC11.profile"),ce_builtin_CGNUC11Profile()}
+        {ce_cstr(&g->arena,"CGNUC11.profile"),ce_builtin_CGNUC11Profile()},
+        {ce_cstr(&g->arena,"CClang.profile"),ce_builtin_CClangProfile()},
+        {ce_cstr(&g->arena,"CClangC11.profile"),ce_builtin_CClangC11Profile()}
     };
-    return ce_profile_bundle(g,profiles,3,profiles[gnu ? 1 : 2].name,error);
+    return ce_profile_bundle(g,profiles,5,profiles[clang ? (gnu ? 3 : 4) : (gnu ? 1 : 2)].name,error);
+}
+bool ce_builtin_language(CeGrammar *g, bool gnu, CeError *error) {
+    return ce_builtin_dialect(g,gnu,false,error);
 }
 
 static CeText dependency_word(CeArena *a, const char *path) {

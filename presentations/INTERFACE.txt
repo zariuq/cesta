@@ -17,7 +17,7 @@ unions and enumerations are (struct node (int value)), (struct node) and
 (typedef T name); type names are (char *) or plain words; sizeof, typeof and
 alignment of a type are written (sizeof type T). Calls splice their arguments,
 (call f a b), and parameter lists may close with ... .
-compact-c/1 is the first compact version, retained unchanged: literal atoms are
+compact-c/1 is the first compact version, retained: literal atoms are
 strings containing exact C token spellings, and its specifier, structure and
 enumeration forms name grammar constructors.
 cmera-style/1 adds independently written function and pointer spellings and
@@ -33,9 +33,16 @@ Examples:
 Documents record the presentation/version, AST-schema identity and actual
 rule-data identity. An unknown version or changed schema/rule identity is
 refused. Raw .cesta authoring defaults to compact-c/2; sealed documents select
-their declared presentation, so a sealed compact-c/1 document keeps reading.
+their declared presentation, so a sealed compact-c/1 document keeps reading
+while the AST schema is unchanged.
 Calls use an explicit call form, so adding an unrelated head does not
 reinterpret a function call.
+
+A schema step adds AST constructors, such as GNU label attributes
+(label done ((__attribute__ unused)) (return 0)). It changes the schema
+identity, so documents sealed before it are refused. Every presentation gains
+a form for each new constructor and keeps every existing form: a retained
+version still writes and reads every earlier tree the same way.
 
 Rule forms
 

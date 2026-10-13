@@ -2,6 +2,7 @@
 
 import argparse
 from collections import Counter
+import concurrent.futures
 import json
 import os
 from pathlib import Path
@@ -89,6 +90,10 @@ def tool_manifest(python, environment):
     return {"files": files, "environment": {name: environment.get(name, "") for name in
         ("PATH", "LD_LIBRARY_PATH", "LD_PRELOAD", "LIBRARY_PATH", "CPATH", "C_INCLUDE_PATH",
          "SOURCE_DATE_EPOCH", "PYTHONPATH", "TIKTOKEN_CACHE_DIR")}}
+
+
+def unit_key(unit):
+    return json.dumps([unit[key] for key in ("source", "compiler", "flags", "configuration")])
 
 
 def reusable(record, unit, cwd):
@@ -271,8 +276,12 @@ def main():
     parser.add_argument("--only", action="append", default=[])
     parser.add_argument("--corpus", choices=("cetta", "swi"), action="append", default=[])
     parser.add_argument("--reuse", action="store_true", help="reuse completed cases only after input and preprocessor revalidation")
+    parser.add_argument("--fresh", action="store_true", help="recheck all selected units even when completed evidence is current")
     parser.add_argument("--petta-stack-limit", help="optional Prolog process stack budget")
+    parser.add_argument("--jobs", type=int, default=4, help="units qualified at once")
     options = parser.parse_args()
+    if options.jobs < 1:
+        parser.error("--jobs must be positive")
     output = options.output.resolve()
     if not output.is_relative_to(ROOT / "build"):
         parser.error("qualification products belong under cesta/build")
@@ -321,28 +330,47 @@ def main():
             "reader_bridge_sha256": {name: sha((ROOT / filename).read_bytes()) for name, filename in
                 (("CeTTa", "build/cetta-data-reader"), ("PeTTa", "tests/petta_reader_bridge.pl"), ("HE", "tests/he_reader_bridge.py"))}}
         summary_path = directory / "summary.json"
-        previous = json.loads(summary_path.read_text()) if options.reuse and summary_path.exists() else {}
-        cached = previous.get("units", []) if previous.get("inputs") == manifest else []
-        records = []
-        for index, unit in enumerate(units, 1):
-            try:
-                prior = cached[index-1] if index <= len(cached) else {}
-                reuse = reusable(prior, unit, cwd) if prior else False
-                record = prior if reuse else qualify(unit, cwd, corpus, work, binary, hosts, environment)
-            except Exception as error:
-                record = {**unit, "qualified": False, "failure": str(error)}
-                destination = directory / ("failure-"+str(index))
-                if not destination.exists():
-                    shutil.copytree(work, destination)
-                records.append(record)
+        previous = json.loads(summary_path.read_text()) if options.reuse and not options.fresh and summary_path.exists() else {}
+        cached = {unit_key(record): record for record in previous.get("units", [])} \
+            if previous.get("inputs") == manifest else {}
+
+        def check(index, unit):
+            # Each unit has its own working directory, so units run side by side.
+            unit_work = work / str(index)
+            unit_work.mkdir(exist_ok=True)
+            prior = cached.get(unit_key(unit), {})
+            if prior and reusable(prior, unit, cwd):
+                return prior, True
+            return qualify(unit, cwd, corpus, unit_work, binary, hosts, environment), False
+
+        done, failure = {}, None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=options.jobs) as pool:
+            pending = {pool.submit(check, index, unit): index for index, unit in enumerate(units, 1)}
+            for future in concurrent.futures.as_completed(pending):
+                index = pending[future]
+                unit = units[index-1]
+                if future.cancelled():
+                    continue
+                try:
+                    done[index], reuse = future.result()
+                except Exception as error:
+                    done[index] = {**unit, "qualified": False, "failure": str(error)}
+                    destination = directory / ("failure-"+str(index))
+                    if not destination.exists():
+                        shutil.copytree(work / str(index), destination)
+                    failure = failure or error
+                    for waiting in pending:
+                        waiting.cancel()
+                    continue
+                records = [done[key] for key in sorted(done)]
                 (directory / "summary.json").write_text(json.dumps(summary(corpus, records, len(units), manifest), indent=2)+"\n")
-                raise
-            records.append(record)
-            state = summary(corpus, records, len(units), manifest)
-            (directory / "summary.json").write_text(json.dumps(state, indent=2)+"\n")
-            print(f"{corpus} {index}/{len(units)} {Path(unit['source']).name}: "+
-                  ("unchanged inputs revalidate the complete evidence" if reuse else
-                   "four presentations, sixteen switches, twelve host-reader replays and identical native objects"), flush=True)
+                print(f"{corpus} {index}/{len(units)} {Path(unit['source']).name}: "+
+                      ("unchanged inputs revalidate the complete evidence" if reuse else
+                       "four presentations, sixteen switches, twelve host-reader replays and identical native objects"), flush=True)
+        records = [done[key] for key in sorted(done)]
+        if failure is not None:
+            (directory / "summary.json").write_text(json.dumps(summary(corpus, records, len(units), manifest), indent=2)+"\n")
+            raise failure
         for record, unit in zip(records, units):
             if not reusable(record, unit, cwd):
                 raise RuntimeError("corpus source or preprocessing inputs changed before aggregate qualification")
