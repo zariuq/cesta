@@ -1,0 +1,95 @@
+Native C authoring, native-c/1
+============================
+
+An authoring document selects a compact presentation explicitly:
+
+  (cesta native-c/1 compact-c/2
+    (unit
+      (include <stdio.h>)
+      (include "local.h")
+      (define (TWICE x) "((x) + (x))")
+      (fn int main ()
+        (call printf "%d\n" (call TWICE 4))
+        (return 0))))
+
+cesta expand --cc gcc input.cesta -o output.c -- -Iinclude -DFEATURE=1
+emits ordinary C. Flags after -- supply the native admission context.
+cesta cc input.cesta
+builds it using the selected native compiler. The example in examples/native
+builds with make. Existing compact presentations and their sealed AST documents
+keep their own interfaces. native-c/1 is an authoring envelope over a selected
+presentation; it is not an exact presentation of a fully preprocessed C AST.
+
+Forms:
+
+  (include "header.h")          #include "header.h"
+  (include <header.h>)           #include <header.h>
+  (include HEADER_MACRO)         #include HEADER_MACRO
+  (define NAME "C spelling")    object-like macro, possibly empty
+  (define (NAME x y) "...")     function-like macro
+  (define (NAME x ...) "...")   variadic function-like macro
+  (undef NAME)                   #undef NAME
+  (comment "text")               block comment
+  (native "C source")            explicit opaque C fragment
+  (use-macros "file.module" Theory)  import a checked macro theory in unit
+
+Replacement spelling can be a symbol, such as 42, or a string containing the
+exact replacement bytes. No expansion of ordinary C macros happens in these
+forms. Strings used as replacement spelling do not add C quotation marks.
+For example (define WORD "\"hello\"") emits #define WORD "hello".
+Single-line operands cannot contain physical newlines; a native fragment can
+express a complete multiline directive. Comment contents cannot contain */.
+
+Conditional source:
+
+  (cpp-if "defined(FAST)"
+    (then (return 1))
+    (elif "defined(SLOW)" (return 2))
+    (else (return 3)))
+
+cpp-ifdef and cpp-ifndef take an identifier instead of a condition spelling.
+The then branch is required. elif branches are ordered and optional; else is
+optional and last. All branches are printed, and the native preprocessor
+selects the active one. Compact forms in each branch are expanded at their
+surrounding grammar sort; opaque native fragments are checked by the native
+compiler when active. These forms also work inside compact function bodies.
+
+Opaque expression fragments are parenthesized. Other opaque fragments supply
+their own C punctuation. An explicit fragment is not a claim that its contents
+have been parsed, bound, typed, or made hygienic by Cesta. The closed AST codec
+and closed printer refuse open fragments. The native compiler checks emitted
+C and reports its own constraints and extension diagnostics.
+
+Build boundary
+--------------
+
+Ordinary C-only commands delegate to the compiler, including response files.
+Native authoring uses the compiler's default language mode unless -std= is
+supplied. In a mixed command containing native-c/1, the driver asks that same
+compiler to preprocess each C source with its own quoted-include context, then
+hands the resulting compiler outputs to its compilation/link step. Cesta does
+not interpret those outputs. This preserves independent local header lookup
+for sources in different directories. The optional cesta pp engine does not
+participate in this route.
+
+Generated inputs are published atomically with content-dependent names.
+Native make dependencies are rewritten to name the original .cesta input.
+Headers and command-line macro definitions remain native compiler inputs.
+Generated C can also be exported and compiled with no Cesta installation.
+For typed macros the driver uses a private native preprocessing query to
+reserve names hidden in headers and macro definitions. This query does not
+replace authored includes or macro calls in the exported C. Expansion and
+compilation must use matching compiler flags and header environments.
+
+Sorted extension interface
+--------------------------
+
+ce_view_expand_open supplies an extension dispatcher and a first-atom admission
+predicate to the existing sort-directed presentation engine. Every returned
+subtree must have the requested grammar sort. Ordinary presentation expansion
+uses no extension dispatcher. The native source emitter uses this interface
+for its source forms; typed macro expansion can use the same interface with
+its own checked rules and binding contracts.
+
+The existing proofs for closed presentations do not by themselves establish
+typing or hygiene for opaque C source or future macro expansion.

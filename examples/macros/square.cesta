@@ -1,0 +1,9 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (include <stdio.h>)
+    (use-macros "Arithmetic.module" Macros)
+    (fn int main (void)
+      (var int n 2)
+      (var int squared (square-once (post++ n)))
+      (call printf "%d %d\n" squared n)
+      (return 0))))

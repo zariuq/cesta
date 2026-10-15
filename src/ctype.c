@@ -298,7 +298,10 @@ unsigned ce_type_align(const CeSema *sema, const CeType *t) {
     unsigned natural;
     switch (t->kind) {
     case CE_T_VOID: case CE_T_FUNCTION: natural = 1; break;
-    case CE_T_ENUM: natural = abi->align[ce_type_integer_kind(t)]; break;
+    case CE_T_ENUM:
+        natural = t->tag && t->tag->record && t->tag->record->complete
+            ? t->tag->record->align : abi->align[ce_type_integer_kind(t)];
+        break;
     case CE_T_COMPLEX: natural = ce_type_align(sema,t->base); break;
     case CE_T_ARRAY: natural = ce_type_align(sema,t->base); break;
     case CE_T_STRUCT: case CE_T_UNION: natural = t->tag && t->tag->record ? t->tag->record->align : 1; break;
@@ -328,10 +331,11 @@ bool ce_type_same(const CeType *a, const CeType *b) {
     default: return true;
     }
 }
-/* Types that differ at most in qualifiers, at any pointer depth. */
+/* Types that differ at most in qualifiers, through pointers and arrays. */
 bool ce_type_similar(const CeType *a, const CeType *b) {
     if (a->kind != b->kind) return false;
     if (a->kind == CE_T_POINTER) return ce_type_similar(a->base,b->base);
+    if (a->kind == CE_T_ARRAY) return a->length == b->length && ce_type_similar(a->base,b->base);
     CeType ua = *a, ub = *b; ua.qualifiers = ub.qualifiers = 0;
     return ce_type_same(&ua,&ub);
 }

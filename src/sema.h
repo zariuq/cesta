@@ -12,7 +12,7 @@
     X(GNUExternalPragma) X(GNUEmptyExternalDeclaration) X(GNUFileAsm) X(FunctionDefinition) \
     X(GNUFunctionExtension) X(Declaration) X(StaticAssertionDeclaration) X(GNUDeclarationExtension) \
     X(StaticAssertion) X(UniqueDeclarationSpecifiers) X(PrimitiveDeclarationSpecifiers) \
-    X(PrefixedDeclarationSpecifiers) X(PrimitiveSpecifierTail) X(NonTypeSpecifierTail) \
+    X(PrefixedDeclarationSpecifiers) X(GNUAttributeSpecifiers) X(PrimitiveSpecifierTail) X(NonTypeSpecifierTail) \
     X(NoInitDeclarators) X(InitDeclarators) X(InitDeclarator) X(InitDeclaratorValue) \
     X(StorageSpecifier) X(QualifierSpecifier) X(FunctionSpecifier) X(AlignmentSpecifier) \
     X(Typedef) X(Extern) X(Static) X(ThreadLocal) X(Auto) X(Register) X(GNUThread) \
@@ -27,7 +27,9 @@
     X(PrefixedSpecifierQualifiers) X(GNUAlignedMemberSpecifiers) X(PrimitiveQualifierTail) \
     X(QualifierTail) X(NoStructDeclarators) X(StructDeclarators) X(StructDeclarator) X(BitField) \
     X(NoDeclarator) X(SomeDeclarator) X(EnumDefinition) X(EnumDefinitionComma) X(EnumReference) \
-    X(Enumerator) X(EnumeratorValue) X(Const) X(Restrict) X(Volatile) X(AtomicQualifier) \
+    X(Enumerator) X(EnumeratorValue) X(GNUEnumAttributes) X(GNUEnumDefinition) \
+    X(GNUEnumDefinitionComma) X(GNUEnumReference) X(GNUAttributedEnum) \
+    X(Const) X(Restrict) X(Volatile) X(AtomicQualifier) \
     X(GNUConst) X(GNUConstPrefix) X(GNUVolatile) X(GNUVolatilePrefix) X(GNURestrict) \
     X(GNURestrictPrefix) X(GNUAttributeQualifier) X(Inline) X(Noreturn) X(GNUInline) \
     X(GNUInlinePrefix) X(AlignasType) X(AlignasExpression) X(Declarator) X(PointerDeclarator) \
@@ -46,6 +48,8 @@
     X(InitializerExpression) X(InitializerList) X(InitializerListComma) X(GNUEmptyInitializer) \
     X(InitializerElement) X(DesignatedInitializerElement) X(GNUOldArrayInitializer) \
     X(ArrayDesignator) X(MemberDesignator) X(GNUArrayRangeDesignator) \
+    X(GNUIdent) X(GNULabelDeclaration) X(GNUAttributedLabelDeclaration) X(GNUCaseDeclaration) \
+    X(GNUCaseRangeDeclaration) X(GNUDefaultDeclaration) X(GNUAttributeStatement) \
     X(LabeledStatement) X(CompoundStatement) X(ExpressionStatement) X(SelectionStatement) \
     X(IterationStatement) X(JumpStatement) X(Label) X(GNUAttributedLabel) X(Case) X(Default) X(GNUCaseRange) X(Block) \
     X(BlockDeclaration) X(BlockStatement) X(GNUBlockPragma) X(NoFullExpression) \
@@ -238,6 +242,8 @@ typedef struct CeExpr {
     CeType *type;
     unsigned category;
     unsigned bits;                /* the designated bit-field's width */
+    unsigned store_bits;          /* initializer stores into a bit-field */
+    CeType *store_type;
     bool null_pointer, constant;
     unsigned long long value;     /* an integer constant's bits */
     CeConversion conversions[4];  /* applied by the enclosing context, in order */
@@ -296,5 +302,7 @@ CeEntity *ce_sema_entity(CeSema *sema, unsigned kind, unsigned space, CeText nam
                          const CeTree *declaration);
 const CeUse *ce_sema_use(const CeSema *sema, const CeTree *node);
 bool ce_bind(CeSema *sema, const CeTree *unit, CeError *error);
+bool ce_sema_init(CeSema *sema, const CeGrammar *grammar, CeText source, CeError *error);
+void ce_sema_free(CeSema *sema);
 
 #endif

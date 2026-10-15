@@ -12,8 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-CeText ce_name_key(CeArena *arena, CeText name);
-
 static void *checked(void *p) {
     if (!p) { fputs("cesta: out of memory\n",stderr); exit(2); }
     return p;
@@ -294,6 +292,7 @@ static void specifier_flags(Binder *b, const CeTree *t, Context *c) {
     case CE_K_PrimitiveDeclarationSpecifiers: specifier_flags(b,t->children[1],c); break;
     case CE_K_PrefixedDeclarationSpecifiers:
         specifier_flags(b,t->children[0],c); specifier_flags(b,t->children[1],c); break;
+    case CE_K_GNUAttributeSpecifiers: specifier_flags(b,t->children[1],c); break;
     case CE_K_NonTypeSpecifierTail: case CE_K_StorageSpecifier: specifier_flags(b,t->children[0],c); break;
     case CE_K_Typedef: c->is_typedef = true; break;
     case CE_K_Extern: c->external = true; break;
@@ -536,7 +535,9 @@ static bool tag_reference(Binder *b, const CeTree *node, unsigned kind, const Ce
 
 static void collect_labels(Binder *b, const CeTree *t) {
     if (!t || t->production == -1) return;
-    if (ce_sema_kind(b->sema,t) == CE_K_Label || ce_sema_kind(b->sema,t) == CE_K_GNUAttributedLabel) {
+    unsigned kind = ce_sema_kind(b->sema,t);
+    if (kind == CE_K_Label || kind == CE_K_GNUAttributedLabel ||
+        kind == CE_K_GNULabelDeclaration || kind == CE_K_GNUAttributedLabelDeclaration) {
         CeText key = ce_sema_name(b->sema,t->children[0]);
         CeEntity *entity = ce_sema_entity(b->sema,CE_ENTITY_LABEL,CE_SPACE_LABEL,key,t->children[0]);
         entity->scope = CE_SCOPE_FUNCTION; entity->defined = true;
@@ -651,8 +652,18 @@ static bool visit_node(Binder *b, const CeTree *t, size_t depth) {
         return true;
     }
     case CE_K_EnumReference: return tag_reference(b,t,CE_ENTITY_ENUM,t->children[0],false);
+    case CE_K_GNUEnumDefinition: case CE_K_GNUEnumDefinitionComma: {
+        const CeTree *ident = t->children[1];
+        const CeTree *name = ce_sema_kind(b->sema,ident) == CE_K_SomeIdent ? ident->children[0] : NULL;
+        if (!visit_child(b,t,0,depth) || !tag_definition(b,t,CE_ENTITY_ENUM,name)) return false;
+        return visit_child(b,t,2,depth);
+    }
+    case CE_K_GNUEnumReference:
+        return visit_child(b,t,0,depth) && tag_reference(b,t,CE_ENTITY_ENUM,t->children[1],false);
     case CE_K_Goto: case CE_K_GNULabelAddress: case CE_K_GNUAsmLabel: return label_use(b,t->children[0]);
     case CE_K_Label: return visit_child(b,t,1,depth);
+    case CE_K_GNULabelDeclaration: return visit_child(b,t,1,depth);
+    case CE_K_GNUAttributedLabelDeclaration: return visit_child(b,t,1,depth) && visit_child(b,t,2,depth);
     case CE_K_GNUAttributedLabel: return visit_child(b,t,1,depth) && visit_child(b,t,2,depth);
     case CE_K_Member: case CE_K_PointerMember: case CE_K_GNUOffsetNestedMember: return visit_child(b,t,0,depth);
     case CE_K_MemberDesignator: case CE_K_GNUOffsetMember: return true;

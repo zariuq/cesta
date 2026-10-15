@@ -1,0 +1,40 @@
+Module MacroTypes {
+  Theory GenericValues() {
+    Empty Terms {
+      Identity . Expr ::= "(" "typed-identity" DeclarationSpecifiers Expr ")";
+      Store . Statement ::= "(" "typed-store" DeclarationSpecifiers Expr Expr ")";
+    }
+    Equations {
+      (Identity t x) == (Macro "cesta-macro/3" (Profile "gnu11") (Ports)
+        (Arguments
+          (Arg t (CType void) "syntax" (Evaluation "syntax"))
+          (Arg x (CType (TypeArgument t)) "value" (Evaluation "once")))
+        (Result (CType (TypeArgument t)) "value") (Locals)
+        (Template (Argument x)));
+      (Store t out x) == (Macro "cesta-macro/3" (Profile "c11") (Ports)
+        (Arguments
+          (Arg t (CType void) "syntax" (Evaluation "syntax"))
+          (Arg out (CType (TypeArgument t)) "addressable-modifiable" (Evaluation "once"))
+          (Arg x (CType (TypeArgument t)) "value" (Evaluation "once")))
+        (Result (CType void) "statement") (Locals)
+        (Template ("=" (Argument out) (Argument x))));
+    }
+  }
+  Theory WrongTypeHole() {
+    Empty Terms { Bad . Expr ::= "(" "wrong-type-hole" Expr ")"; }
+    Equations {
+      (Bad x) == (Macro "cesta-macro/3" (Profile "gnu11") (Ports)
+        (Arguments (Arg x (CType int) "value" (Evaluation "once")))
+        (Result (CType (TypeArgument x)) "value") (Locals)
+        (Template (Argument x)));
+    }
+  }
+  Theory MissingTypeHole() {
+    Empty Terms { Bad . Expr ::= "(" "missing-type-hole" Expr ")"; }
+    Equations {
+      (Bad x) == (Macro "cesta-macro/3" (Profile "gnu11") (Ports)
+        (Arguments (Arg x (CType (TypeArgument missing)) "value" (Evaluation "once")))
+        (Result (CType int) "value") (Locals) (Template (Argument x)));
+    }
+  }
+}

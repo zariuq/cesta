@@ -1,0 +1,14 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (include <stdint.h>)
+    (include <stdio.h>)
+    (use-macros "../../macros/Narrowing.module" Checked)
+    (fn int main (void)
+      (var uint64_t next 255u)
+      (var uint8_t out 77)
+      (var int first (try-narrow uint64_t uint8_t (post++ next) out))
+      (var int second (try-narrow uint64_t uint8_t (post++ next) out))
+      (call printf "%d %d %u %llu\n" first second
+        (cast unsigned out) (cast (unsigned long long) next))
+      (return (! (&& (&& (== first 1) (== second 0))
+        (&& (== out 255) (== next 257u))))))))

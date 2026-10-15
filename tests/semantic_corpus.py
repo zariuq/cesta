@@ -96,12 +96,14 @@ def qualify(unit, binary, output, inputs, prior=None):
                 tree = oracle.clang_tree(paths["clang"], unit)
                 binding = oracle.binding(binary, unit, paths["clang"], tree)
                 types_data, _ = oracle.cesta(binary, "types", unit, paths["clang"], dialect="clang")
-                conversions = oracle.categories_and_conversions(binary, unit, paths["clang"], tree, types_data)
+                conversion_details = []
+                conversions = oracle.categories_and_conversions(binary, unit, paths["clang"], tree, types_data, conversion_details)
                 del tree
                 layouts = oracle.layouts(paths["clang"], unit, types_data)
                 accepted, counts, diagnostic = oracle.probes(binary, unit, paths["clang"], work, "clang", "clang")
                 explicit = oracle.explicit(binary, unit, paths["clang"], work / "explicit")
-                record["clang"] = {"binding": dict(binding), "conversions": dict(conversions), "layouts": dict(layouts),
+                record["clang"] = {"binding": dict(binding), "conversions": dict(conversions), "conversion_disagreements": conversion_details,
+                                   "layouts": dict(layouts),
                                    "probes_accepted": accepted,
                                    "probes": counts, "diagnostic": diagnostic if not accepted else "",
                                    "explicit": explicit}

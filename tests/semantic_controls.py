@@ -158,6 +158,23 @@ def main():
                 if compiles("clang", probe, "--target=" + triple, "-w") != (other == abi):
                     failures.append(f"{abi} probes {'refused' if other == abi else 'accepted'} on {triple}")
         from semantic_oracles import layouts, probes
+        # Enumerations must agree on signedness, storage and alignment at the
+        # byte/short/int/long boundaries, including both attribute positions.
+        enums = ROOT / "tests/semantics/packed_enums.c"
+        for abi, triple in TARGETS:
+            generated = subprocess.run([binary,"probe","--std=gnu11","--dialect=clang",
+                                        "--abi="+abi,str(enums)],capture_output=True)
+            enum_probe = work / (abi+"-enums.c")
+            enum_probe.write_bytes(generated.stdout)
+            if generated.returncode or not compiles("clang",enum_probe,"--target="+triple):
+                failures.append(f"{abi}: attributed enumeration probes disagree with Clang: " +
+                                generated.stderr.decode()[:200])
+            if abi == "x86_64-sysv-lp64":
+                generated = subprocess.run([binary,"probe","--std=gnu11","--dialect=gcc",
+                                            str(enums)],capture_output=True)
+                enum_probe.write_bytes(generated.stdout)
+                if generated.returncode or not compiles("gcc",enum_probe):
+                    failures.append("LP64: attributed enumeration probes disagree with GCC")
         for abi, triple in TARGETS:
             data = subprocess.run([binary, "types", "--dialect=clang", "--abi="+abi, str(targets)],
                                   capture_output=True, check=True).stdout

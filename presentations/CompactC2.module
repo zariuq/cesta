@@ -109,6 +109,11 @@ Module CompactC2Presentation {
       StatementCase . Statement ::= "(" "case" Expr2 Statement ")";
       StatementCaseRange . Statement ::= "(" "case" Expr2 "..." Expr2 Statement ")";
       StatementAttributedLabel . Statement ::= "(" "label" CGeneralName [GNUAttribute] Statement ")";
+      StatementLabelDeclaration . Statement ::= "(" "label-decl" CGeneralName Declaration ")";
+      StatementAttributedLabelDeclaration . Statement ::= "(" "label-decl" CGeneralName [GNUAttribute] Declaration ")";
+      StatementCaseDeclaration . Statement ::= "(" "case-decl" Expr2 Declaration ")";
+      StatementCaseRangeDeclaration . Statement ::= "(" "case-range-decl" Expr2 Expr2 Declaration ")";
+      StatementDefaultDeclaration . Statement ::= "(" "default-decl" Declaration ")";
       StatementDefault . Statement ::= "(" "default" Statement ")";
       Block . Block ::= "(" "block" [BlockItem] ")";
       NoFullExpression . OptionalFullExpression ::= "(" ")";
@@ -273,6 +278,7 @@ Module CompactC2Presentation {
       GNURestrict . TypeQualifier ::= "__restrict__";
       GNURestrictPrefix . TypeQualifier ::= "__restrict";
       GNUAttributeQualifier . TypeQualifier ::= GNUAttribute;
+      GNUAttributeSpecifiers . DeclarationSpecifiers ::= "(" "attributes" [GNUAttribute] DeclarationSpecifiers ")";
       Inline . FunctionSpecifier ::= "inline";
       Noreturn . FunctionSpecifier ::= "_Noreturn";
       GNUInline . FunctionSpecifier ::= "__inline__";
@@ -289,6 +295,11 @@ Module CompactC2Presentation {
       UnionAnonymousShort . StructSpecifier ::= "(" "union" [StructDeclaration] ")";
       GNUEmptyStruct . StructSpecifier ::= "(" "empty-struct" StructOrUnion OptionalIdent ")";
       GNUAttributedStruct . StructSpecifier ::= "(" "attributed-struct" StructSpecifier GNUAttribute ")";
+      GNUEnumAttributes . GNUEnumAttributes ::= "(" "attributes" [GNUAttribute] ")";
+      GNUEnumDefinition . EnumSpecifier ::= "(" "enum" GNUEnumAttributes OptionalIdent [Enumerator] ")";
+      GNUEnumDefinitionComma . EnumSpecifier ::= "(" "enum," GNUEnumAttributes OptionalIdent [Enumerator] ")";
+      GNUEnumReference . EnumSpecifier ::= "(" "enum" GNUEnumAttributes CGeneralName ")";
+      GNUAttributedEnum . EnumSpecifier ::= "(" "attributed-enum" EnumSpecifier GNUAttribute ")";
       Struct . StructOrUnion ::= "struct";
       Union . StructOrUnion ::= "union";
       GNUAttributedStructKind . StructOrUnion ::= "(" "attributed-struct-kind" StructOrUnion GNUAttribute ")";
@@ -480,6 +491,13 @@ Module CompactC2Presentation {
       Case . LabeledStatement ::= "(" "case" Expr2 Statement ")";
       GNUCaseRange . LabeledStatement ::= "(" "case" Expr2 "..." Expr2 Statement ")";
       GNUAttributedLabel . LabeledStatement ::= "(" "label" CGeneralName [GNUAttribute] Statement ")";
+      GNULabelDeclaration . LabeledStatement ::= "(" "label-decl" CGeneralName Declaration ")";
+      GNUAttributedLabelDeclaration . LabeledStatement ::= "(" "label-decl" CGeneralName [GNUAttribute] Declaration ")";
+      GNUCaseDeclaration . LabeledStatement ::= "(" "case-decl" Expr Declaration ")";
+      GNUCaseRangeDeclaration . LabeledStatement ::= "(" "case-range-decl" Expr Expr Declaration ")";
+      GNUDefaultDeclaration . LabeledStatement ::= "(" "default-decl" Declaration ")";
+      GNUAttributeStatement . Statement ::= "(" "attributes-statement" [GNUAttribute] ")";
+      GNUIdent . ExternalDeclaration ::= "(" "ident" CIdentDirective ")";
       Default . LabeledStatement ::= "(" "default" Statement ")";
       If . SelectionStatement ::= "(" "if" Expr Statement ")";
       IfElse . SelectionStatement ::= "(" "if" Expr Statement Statement ")";
@@ -549,6 +567,11 @@ Module CompactC2Presentation {
       (StatementCase a b) == (LabeledStatement (Case a b));
       (StatementCaseRange a b c) == (LabeledStatement (GNUCaseRange a b c));
       (StatementAttributedLabel a b c) == (LabeledStatement (GNUAttributedLabel a b c));
+      (StatementLabelDeclaration a b) == (LabeledStatement (GNULabelDeclaration a b));
+      (StatementAttributedLabelDeclaration a b c) == (LabeledStatement (GNUAttributedLabelDeclaration a b c));
+      (StatementCaseDeclaration a b) == (LabeledStatement (GNUCaseDeclaration a b));
+      (StatementCaseRangeDeclaration a b c) == (LabeledStatement (GNUCaseRangeDeclaration a b c));
+      (StatementDefaultDeclaration a) == (LabeledStatement (GNUDefaultDeclaration a));
       (StatementDefault a) == (LabeledStatement (Default a));
 
       (TypedefName a b) == (Declaration (PrefixedDeclarationSpecifiers (StorageSpecifier (Typedef)) a) (InitDeclarators (List (InitDeclarator b))));

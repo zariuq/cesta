@@ -1,0 +1,45 @@
+Module MacroPorts {
+  Theory NativeFunctions() {
+    Empty Terms {
+      Absolute . Expr ::= "(" "native-abs" Expr ")";
+      Apply . Expr ::= "(" "apply-native" Expr ")";
+    }
+    Equations {
+      (Absolute x) == (Macro "cesta-macro/2"
+        (Profile "gnu11")
+        (Ports (NativeSymbol absolute (SystemHeader "stdlib.h")
+          (CType int ("function" TypeSlot int)) "abs"))
+        (Arguments (Arg x (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals)
+        (Template (call (DefinitionRef "ordinary" absolute) (Argument x))));
+      (Apply x) == (Macro "cesta-macro/2"
+        (Profile "gnu11")
+        (Ports (NativeSymbol provider (SystemHeader "provider.h")
+          (CType int ("function" TypeSlot int)) "provider"))
+        (Arguments (Arg x (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals)
+        (Template (call (DefinitionRef "ordinary" provider) (Argument x))));
+    }
+  }
+  Theory MissingPort() {
+    Empty Terms { Bad . Expr ::= "(" "bad" ")"; }
+    Equations {
+      (Bad) == (Macro "cesta-macro/2" (Profile "gnu11") (Ports)
+        (Arguments) (Result (CType int) "value") (Locals)
+        (Template (DefinitionRef "ordinary" absent)));
+    }
+  }
+  Theory NativeObjects() {
+    Empty Terms { Add . Expr ::= "(" "add-native-state" Expr ")"; }
+    Equations {
+      (Add x) == (Macro "cesta-macro/2"
+        (Profile "gnu11")
+        (Ports (NativeSymbol state (SystemHeader "object_provider.h") (CType int) "state"))
+        (Arguments (Arg x (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value") (Locals)
+        (Template ("+=" (DefinitionRef "ordinary" state) (Argument x))));
+    }
+  }
+}

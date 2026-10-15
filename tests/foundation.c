@@ -187,6 +187,43 @@ static void policy_controls(void) {
     ce_lr_free(&lr); ce_grammar_free(&g); ce_arena_free(&a);
 }
 
+static void multiple_policy_controls(void) {
+    const char *rules = "Start . S ::= A; ViaB . A ::= B; ViaC . A ::= C; ViaD . A ::= D; "
+        "BLeaf . B ::= \"x\"; CLeaf . C ::= \"x\"; DLeaf . D ::= \"x\";";
+    const char *profiles[] = {
+        "profile None;",
+        "profile Partial; conflict any prefer reduce \"BLeaf\" \"B\" over reduce \"CLeaf\" \"C\";",
+        "profile Winner; conflict any prefer reduce \"BLeaf\" \"B\" over reduce \"CLeaf\" \"C\"; "
+            "conflict any prefer reduce \"BLeaf\" \"B\" over reduce \"DLeaf\" \"D\";",
+        "profile Cycle; conflict any prefer reduce \"BLeaf\" \"B\" over reduce \"CLeaf\" \"C\"; "
+            "conflict any prefer reduce \"CLeaf\" \"C\" over reduce \"DLeaf\" \"D\"; "
+            "conflict any prefer reduce \"DLeaf\" \"D\" over reduce \"BLeaf\" \"B\";",
+        "profile Overlap; conflict any prefer reduce \"BLeaf\" \"B\" over reduce \"CLeaf\" \"C\"; "
+            "conflict \"EOF\" prefer reduce \"BLeaf\" \"B\" over reduce \"CLeaf\" \"C\";"
+    };
+    for (size_t i = 0; i < sizeof(profiles)/sizeof(*profiles); ++i) {
+        CeArena a = {0}; CeGrammar g = {0}; CeLR lr = {0}; CeError error = {{0},0};
+        require(ce_grammar_read(&g,ce_cstr(&a,rules),&error) && ce_grammar_finish(&g,&error),error.message);
+        require(ce_profile_read(&g,ce_cstr(&a,profiles[i]),&error),error.message);
+        bool prepared = ce_lr_prepare(&g,g.productions[0].lhs,&lr,&error);
+        if (i == 4) require(!prepared,"overlapping action-pair declarations are refused");
+        else {
+            require(prepared && lr.ambiguities == 1,error.message);
+            require((lr.conflicts == 0) == (i == 2),"each alternative needs a direct winning preference");
+            CeTokens tokens = {0}; CeForest f = {.root=-1}; CeTree *tree = NULL;
+            require(ce_lex(&g,ce_cstr(&a,"x"),&tokens,&error),error.message);
+            bool parsed = ce_lr_parse(&g,&lr,&tokens,&f,&error);
+            require(parsed == (i == 2),"partial and cyclic policies cannot enable LR parsing");
+            if (parsed) {
+                require(ce_tree_from_forest(&g,&f,&tokens,&a,&tree,&error),error.message);
+                require(ce_tree_label(&g,tree->children[0],"ViaB"),"declared three-way winner selects the intended tree");
+            }
+            ce_forest_free(&f); ce_tokens_free(&tokens);
+        }
+        ce_lr_free(&lr); ce_grammar_free(&g); ce_arena_free(&a);
+    }
+}
+
 static void long_list_control(void) {
     CeArena a = {0}; CeGrammar g = {0}; CeLR lr = {0}; CeDFA dfa = {0}; CeTokens tokens = {0};
     CeForest f = {.root=-1}; CeError error = {{0},0}; CeTree *tree, *decoded;
@@ -255,7 +292,7 @@ int main(void) {
     reject_grammar("List . S ::= \"x\";"); reject_grammar("Symbol . S ::= \"x\";");
     reject_grammar("Root . S ::= [Ident]; [] . [Ident] ::=; Bad . [Ident] ::= \"b\" \"a\";");
     reject_grammar("Root . S ::= [Ident]; (:) . [Ident] ::= Ident;");
-    byte_controls(); lr_controls(); dfa_controls(); policy_controls(); long_list_control();
+    byte_controls(); lr_controls(); dfa_controls(); policy_controls(); multiple_policy_controls(); long_list_control();
     printf("foundation: %u checks passed\n", checks);
     return 0;
 }

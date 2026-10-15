@@ -208,5 +208,68 @@
     "Scope-hook and conflict-policy correctness",
     "C typing and execution semantics",
     "Byte escaping and compiler correspondence"
-  ]
+  ],
+  "preprocessing": {
+    "module": "CPreprocessing",
+    "authority": "N1570 6.10 and the preprocessing-token grammar of 6.4, 6.4.7 and 6.4.8; GNU and C23 directives, lenient directive lines and GCC token forms are a separate extension module outside this comparison.",
+    "native_category_names": {
+      "PreprocessingFile": "preprocessing-file",
+      "GroupPart": "group-part",
+      "IfSection": "if-section",
+      "IfGroup": "if-group",
+      "ElifGroup": "elif-group",
+      "ElseGroup": "else-group",
+      "EndifLine": "endif-line",
+      "ControlLine": "control-line",
+      "TextLine": "text-line",
+      "NonDirective": "non-directive",
+      "ReplacementList": "replacement-list",
+      "IdentifierList": "identifier-list",
+      "PPToken": "preprocessing-token"
+    },
+    "optional_categories": {
+      "OptionalPPTokens": "pp-tokens",
+      "OptionalIdentifierList": "identifier-list",
+      "OptionalElseGroup": "else-group"
+    },
+    "standard_list_categories": [
+      "group",
+      "elif-groups",
+      "pp-tokens"
+    ],
+    "token_categories": {
+      "CPPHeaderName": "header-name",
+      "CPPIdentifier": "identifier",
+      "CPPNumber": "pp-number",
+      "CPPCharacter": "character-constant",
+      "CPPString": "string-literal",
+      "CPPPunctuator": "punctuator",
+      "CPPOther": "@other",
+      "CPPNewLine": "new-line",
+      "CPPLParen": "lparen"
+    },
+    "classification_markers": {
+      "<elif-line>": "elif-group",
+      "<else-line>": "else-group",
+      "<endif-line>": "endif-line",
+      "condition": "Zero-width markers that the scanner places before the # of the lines closing a group, from the directive name, so that a one-token-lookahead parser can end the group there; they spell no source and are removed before comparison."
+    },
+    "conditional_operand": {
+      "standard": "constant-expression",
+      "native": "pp-tokens",
+      "clause": "6.10.1p4",
+      "condition": "The controlling expression of #if and #elif is formed from these preprocessing tokens by macro replacement and the defined operator before it is evaluated as a constant-expression."
+    },
+    "other_token": {
+      "clause": "6.4p1",
+      "condition": "Each non-white-space character that cannot be one of the above: the scanner forms one only where no longer preprocessing token starts at that character."
+    },
+    "lparen_condition": {
+      "clause": "6.10p1",
+      "condition": "A ( not immediately preceded by white space; the scanner forms lparen only after the macro name of a #define."
+    },
+    "inclusion_tokens": {
+      "condition": "Identifiers, pp-numbers, character constants and string literals are read as phase 3 forms them (GCC's '$', extended characters and unchecked escapes); each standard language is contained in its token, and agreement with the compilers' own lexers is a separate corpus check."
+    }
+  }
 }

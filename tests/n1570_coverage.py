@@ -173,10 +173,10 @@ def statements(source):
         at += 1
 
 
-def read_authored(grammar_dir, overrides=None):
+def read_authored(grammar_dir, overrides=None, modules=ISO_MODULES):
     rules, macros, tokens, token_order, comments, entries, hashes = [], {}, {}, [], [], [], {}
     overrides = overrides or {}
-    for module in ISO_MODULES:
+    for module in modules:
         path = grammar_dir / (module + ".module")
         source = overrides.get(module, path.read_text())
         hashes[path.name] = hashlib.sha256(source.encode()).hexdigest()
@@ -921,6 +921,181 @@ class LexicalComparison:
                 "visited_lexical_nonterminals": sorted(post_lexical)}
 
 
+class PreprocessingComparison:
+    """ISO 6.10 and the preprocessing-token grammar against the authored
+    CPreprocessing module: ordered productions after the declared adapters,
+    exact header-name, punctuator, new-line, lparen and other languages, and
+    containment of the standard identifier, pp-number and literal languages."""
+
+    def __init__(self, authored, standard, citations, data, refactorings, lexical):
+        self.authored, self.std, self.citations, self.data = authored, standard, citations, data
+        self.ref = refactorings["preprocessing"]
+        self.lexical = lexical
+        self.names = self.ref["native_category_names"]
+        self.optional_names = self.ref["optional_categories"]
+        self.tokens = self.ref["token_categories"]
+        self.markers = {k: v for k,v in self.ref["classification_markers"].items() if k.startswith("<")}
+        self.operand = self.ref["conditional_operand"]
+        self.by_lhs = defaultdict(list)
+        for rule in authored.rules: self.by_lhs[rule.lhs].append(rule)
+        self.std_lists, self.used_macros, self.verified_aux = {}, set(), set()
+        for name in self.ref["standard_list_categories"]:
+            choices = self.std[name]
+            base = [x for x in choices if N(name) not in x]
+            recursive = [x for x in choices if N(name) in x]
+            require(len(base) == len(recursive) == 1 and len(base[0]) == 1 and recursive[0] == (N(name),)+base[0],
+                    f"reference list {name} is not a left-recursive list of one element")
+            self.std_lists[name] = L(1, base[0][0], "")
+        scope = [r for r in data["normative"] if r["scope"].startswith("preprocessing_")]
+        self.scope = {r["nonterminal"]: r for r in scope}
+        other = [rhs for rhs in self.std["preprocessing-token"] if all(x[0] == "t" for x in rhs) and len(rhs) > 3]
+        require(len(other) == 1, "reference preprocessing-token prose alternative changed")
+        self.other_rhs = other[0]
+
+    def std_atom(self, item):
+        if item[0] == "t": return [(item,)]
+        if item[0] == "optional":
+            child = item[1]
+            if child[0] == "n" and child[1] in self.std_lists: return [(optional(self.std_lists[child[1]]),)]
+            return [(), *self.std_atom(child)]
+        name = item[1]
+        if name == self.operand["standard"]: return [(self.std_lists[self.operand["native"]],)]
+        if name in self.std_lists: return [(self.std_lists[name],)]
+        return [(item,)]
+
+    def std_rhs(self, name, rhs):
+        if name == "preprocessing-token" and rhs == self.other_rhs: return [(N("@other"),)]
+        branches = [()]
+        for item in rhs: branches = [a+b for a in branches for b in self.std_atom(item)]
+        return branches
+
+    def mapped(self, name):
+        if name in self.names: return self.names[name]
+        if name in self.tokens: return self.tokens[name]
+        raise CoverageError(f"unmapped authored preprocessing category {name}")
+
+    def native_atom(self, item):
+        if item[0] == "t":
+            return [()] if item[1] in self.markers else [(item,)]
+        name = item[1]
+        if name.startswith("["):
+            element = name[1:-1]
+            require(element in self.authored.macros, f"list category [{element}] has no authored macro")
+            self.used_macros.add(element)
+            minimum, separator, kind, module, line = self.authored.macros[element]
+            require(kind == "separator" or separator == "", f"{module}:{line}: a terminator retains a trailing separator")
+            return [(L(minimum, N(self.mapped(element)), separator),)]
+        if name in self.optional_names:
+            target = self.optional_names[name]
+            if target in self.std_lists: return [(optional(self.std_lists[target]),)]
+            return [(), (N(target),)]
+        return [(N(self.mapped(name)),)]
+
+    def native_rhs(self, rhs):
+        branches = [()]
+        for item in rhs: branches = [a+b for a in branches for b in self.native_atom(item)]
+        return branches
+
+    def check_interfaces(self):
+        for name, target in self.optional_names.items():
+            actual = [r.rhs for r in self.by_lhs[name]]
+            require(len(actual) == 2 and actual.count(()) == 1, f"optional interface {name} must have exactly empty and nonempty alternatives")
+            some = next(x for x in actual if x)
+            require(len(some) == 1, f"optional interface {name} must wrap one category")
+            if target in self.std_lists:
+                found = self.native_atom(some[0])
+                require(found == [(self.std_lists[target],)], f"optional list interface {name} differs from {target}")
+            else:
+                require(self.native_rhs(some) == [(N(target),)], f"optional interface {name} changed its nonempty child")
+            self.verified_aux.add(name)
+        # Each marker opens exactly its own group-closing line, before the #.
+        for marker, owner in self.markers.items():
+            uses = [(r.lhs, i) for r in self.authored.rules for i,x in enumerate(r.rhs) if x == T(marker)]
+            require(uses and all(self.mapped(lhs) == owner and i == 0 for lhs,i in uses),
+                    f"marker {marker} must only open {owner} productions")
+            require(all(r.rhs[:2] == (T(marker), T("#")) for r in self.by_lhs[next(k for k,v in self.names.items() if v == owner)]),
+                    f"every {owner} production must open with {marker} #")
+
+    def compare_phrases(self):
+        self.check_interfaces()
+        lexical_names = {"header-name", "h-char-sequence", "h-char", "q-char-sequence", "q-char", "pp-number",
+                         "new-line", "lparen"}
+        expected, origins = set(), defaultdict(list)
+        # Phrase categories the directives use from clause 6.7 (identifier-list)
+        # are compared with the preprocessing rules that author them.
+        token_names = set(self.tokens.values())
+        names, pending = set(), [n for n in self.scope if n not in lexical_names and n not in self.std_lists]
+        while pending:
+            name = pending.pop()
+            if name in names: continue
+            names.add(name)
+            for rhs in self.std[name]:
+                for item in rhs:
+                    child = item[1] if item[0] == "optional" else item
+                    if child[0] == "n" and child[1] not in lexical_names and child[1] not in self.std_lists \
+                            and child[1] not in token_names and child[1] != self.operand["standard"]:
+                        pending.append(child[1])
+        for name in sorted(names):
+            for i,rhs in enumerate(self.std[name]):
+                for branch in self.std_rhs(name, rhs):
+                    expected.add((name, branch)); origins[(name, branch)].append(self.citations[name][i])
+        actual, sources = Counter(), defaultdict(list)
+        for rule in self.authored.rules:
+            if rule.lhs in self.verified_aux: continue
+            lhs = self.mapped(rule.lhs)
+            for rhs in self.native_rhs(rule.rhs):
+                actual[(lhs, rhs)] += 1
+                sources[(lhs, rhs)].append({"module": rule.module, "line": rule.line, "label": rule.label})
+        missing, invented = expected-set(actual), set(actual)-expected
+        duplicates = {k: n for k,n in actual.items() if n > 1}
+        def present(key):
+            lhs,rhs = key
+            return {"lhs": lhs, "rhs": [show(x) for x in rhs], "source": sources.get(key, []),
+                    "standard": origins.get(key, self.citations.get(lhs, []))}
+        unused = set(self.authored.macros)-self.used_macros
+        require(not unused, f"unaccounted authored preprocessing list macros {sorted(unused)}")
+        return {"normalized_expected": len(expected), "normalized_authored": len(actual),
+                "missing": [present(k) for k in sorted(missing, key=str)],
+                "invented": [present(k) for k in sorted(invented, key=str)],
+                "duplicates": [{**present(k), "multiplicity": n} for k,n in duplicates.items()],
+                "verified_auxiliary_categories": sorted(self.verified_aux)}
+
+    def compare_tokens(self):
+        authored = self.authored.tokens
+        require(set(authored) == set(self.tokens), f"undeclared preprocessing tokens {set(authored)^set(self.tokens)}")
+        require(not self.authored.comments, "comments are phase 3 white space, not part of the directive grammar")
+        require(self.authored.entries == ["PreprocessingFile"], "entrypoint interface differs from preprocessing-file")
+        excluded = self.lexical.ref["byte_carrier_profile"]["literal_excluded_bytes"]
+        def chars(close): return ("set", ALL_BYTES & ~rset([close, *excluded])[1])
+        header = linear_regular_grammar(self.std, "header-name", {"h-char": chars(ord(">")), "q-char": chars(ord('"'))})
+        for name in ("header-name", "h-char-sequence", "h-char", "q-char-sequence", "q-char"):
+            require(name in self.scope, f"reference {name} missing")
+        punctuation = {r[0][1] for r in self.std["punctuator"]}
+        white = rset([ord(x) for x in " \t\n\v\f\r"])
+        exact = [("CPPHeaderName", "header-name", header),
+                 ("CPPPunctuator", "punctuator", ralt(*(rtext(x) for x in sorted(punctuation)))),
+                 ("CPPNewLine", "new-line", rtext("\n")),
+                 ("CPPLParen", "lparen", rtext("(")),
+                 ("CPPOther", "preprocessing-token", ("set", ALL_BYTES & ~white[1]))]
+        checks = []
+        for native, name, language in exact:
+            checks.append({"native_token": native, "standard": name, "citations": self.citations[name],
+                           **compare_regex(language, authored[native]), "relation": "equal"})
+        lex = self.lexical
+        pp_leaves = {"identifier-nondigit": lex.nondigit(lex.ranges, constrained_ucn=False)}
+        literal_leaves = {"universal-character-name": scalar_ucn_regex(lex.literal_ranges)}
+        contained = [("CPPIdentifier", "identifier", lex.identifier_regex()),
+                     ("CPPNumber", "pp-number", lex.source_regex("pp-number", pp_leaves)),
+                     ("CPPCharacter", "character-constant", lex.source_regex("character-constant", literal_leaves)),
+                     ("CPPString", "string-literal", lex.source_regex("string-literal", literal_leaves))]
+        for native, name, language in contained:
+            checks.append({"native_token": native, "standard": name, "citations": self.citations[name],
+                           **compare_regex(language, authored[native], "subset"), "relation": "contains"})
+        return {"checks": checks,
+                "conditions": [self.ref["other_token"], self.ref["lparen_condition"], self.ref["inclusion_tokens"],
+                               self.operand, self.ref["classification_markers"]["condition"]]}
+
+
 def verify_reference(data, source=None):
     normative = Counter((r["clause"],r["nonterminal"],p["rhs"])
                         for r in data["normative"] for p in r["productions"])
@@ -929,9 +1104,13 @@ def verify_reference(data, source=None):
     require(normative == annex, "independent Clause-6 extraction differs from Annex A cross-check")
     names = [r["nonterminal"] for r in data["normative"]]
     require(len(names) == len(set(names)), "reference contains duplicate nonterminal headers")
-    included = [r for r in data["normative"] if r["scope"].startswith("post_preprocessing_")]
-    require(len(included) == 120 and sum(len(r["productions"]) for r in included) == 520,
+    post = [r for r in data["normative"] if r["scope"].startswith("post_preprocessing_")]
+    require(len(post) == 120 and sum(len(r["productions"]) for r in post) == 520,
             "post-preprocessing C11 extraction is not the intended 120 nonterminals / 520 alternatives")
+    preprocessing = [r for r in data["normative"] if r["scope"].startswith("preprocessing_")]
+    require(len(preprocessing) == 23 and sum(len(r["productions"]) for r in preprocessing) == 57,
+            "preprocessing C11 extraction is not the intended 23 nonterminals / 57 alternatives")
+    included = post+preprocessing
     source_checked = False
     if source is not None:
         carrier = source.read_bytes()
@@ -992,11 +1171,26 @@ def audit(grammar_dir, data, refactorings, profile, overrides=None):
         if any(phrase_report[x] for x in ("missing", "invented", "duplicates")):
             output["failure_stage"] = "ordered phrase productions"
             return output
-        lexical_report = LexicalComparison(authored,standard,citations,data,refactorings,phrase).compare()
+        lexical = LexicalComparison(authored,standard,citations,data,refactorings,phrase)
+        lexical_report = lexical.compare()
         output["lexical"] = lexical_report
         checks = lexical_report["exact_language_checks"]+[lexical_report["rejected_pp_number_guard"]]
         output["ok"] = all(row["ok"] for row in checks)
-        if not output["ok"]: output["failure_stage"] = "lexical regular languages"
+        if not output["ok"]:
+            output["failure_stage"] = "lexical regular languages"
+            return output
+        pp_authored = read_authored(grammar_dir, overrides, (refactorings["preprocessing"]["module"],))
+        output["module_sha256"].update(pp_authored.hashes)
+        pp = PreprocessingComparison(pp_authored,standard,citations,data,refactorings,lexical)
+        pp_phrase = pp.compare_phrases()
+        output["preprocessing"] = {"phrase": pp_phrase}
+        if any(pp_phrase[x] for x in ("missing", "invented", "duplicates")):
+            output["ok"], output["failure_stage"] = False, "preprocessing productions"
+            return output
+        pp_tokens = pp.compare_tokens()
+        output["preprocessing"]["tokens"] = pp_tokens
+        if not all(row["ok"] for row in pp_tokens["checks"]):
+            output["ok"], output["failure_stage"] = False, "preprocessing token languages"
         # Every original production keeps its original citation and explicit
         # transformation boundary, including alternatives distributed by inlining.
         accounting = []
@@ -1010,6 +1204,16 @@ def audit(grammar_dir, data, refactorings, profile, overrides=None):
             else: method = "ordered RHS comparison after declared name/optional/list adapters"
             accounting.append({"nonterminal": name, "clause": row["clause"], "scope": row["scope"],
                                "method": method, "productions": row["productions"]})
+        if output["ok"]:
+            lexical_pp = {"header-name", "h-char-sequence", "h-char", "q-char-sequence", "q-char", "pp-number", "new-line", "lparen"}
+            for row in data["normative"]:
+                if not row["scope"].startswith("preprocessing_"): continue
+                name = row["nonterminal"]
+                if name in lexical_pp: method = "token-language comparison (equal, or containing for pp-number)"
+                elif name in pp.std_lists: method = "extracted nonempty list language; authored minimum/separator/element checked"
+                else: method = "ordered RHS comparison after declared name/optional/list/marker/operand adapters"
+                accounting.append({"nonterminal": name, "clause": row["clause"], "scope": row["scope"],
+                                   "method": method, "productions": row["productions"]})
         output["original_production_accounting"] = accounting
         output["conditions"] = [refactorings["phase6_string_lists"], refactorings["byte_carrier_profile"],
                                 {"clause": "6.7.2p2", "condition": "Complete legal primitive-type multisets, declaration constraints and typing remain external."}]
@@ -1072,6 +1276,24 @@ def corruption_controls(grammar_dir, data, refactorings, profile):
     alter_token("invented integer token spelling","CInteger",'{"0b1"}')
     alter_token("equivalent integer regex alternative","CInteger",'{"1"}',True)
     replace("omitted pp-number signed-exponent continuation","CLex",' | ["eEpP"] ["+-"]', '')
+    pp_source = (grammar_dir/"CPreprocessing.module").read_text()
+    def pp_replace(name,before,after,expected_ok=False):
+        require(pp_source.count(before) == 1, f"control {name}: mutation anchor no longer unique")
+        run(name,"CPreprocessing",pp_source.replace(before,after),expected_ok)
+    pp_replace("omitted control-line alternative",'Undef . ControlLine ::= "#" "undef" CPPIdentifier CPPNewLine;','')
+    pp_replace("invented directive",'NullDirective . ControlLine ::= "#" CPPNewLine;',
+               'NullDirective . ControlLine ::= "#" CPPNewLine;\n      Invented . ControlLine ::= "#" "invented" CPPNewLine;')
+    pp_replace("optional non-directive tokens",'NonDirective . NonDirective ::= [PPToken] CPPNewLine;',
+               'NonDirective . NonDirective ::= OptionalPPTokens CPPNewLine;')
+    pp_replace("reordered if-section",'IfSection . IfSection ::= IfGroup [ElifGroup] OptionalElseGroup EndifLine;',
+               'IfSection . IfSection ::= IfGroup OptionalElseGroup [ElifGroup] EndifLine;')
+    pp_replace("misplaced group marker",'EndifLine . EndifLine ::= "<endif-line>" "#" "endif" CPPNewLine;',
+               'EndifLine . EndifLine ::= "#" "<endif-line>" "endif" CPPNewLine;')
+    pp_replace("header-name crossing lines","token CPPHeaderName (('<' (char - [\"\\n\\r\\x00>\"])+ '>')",
+               "token CPPHeaderName (('<' (char - [\"\\r\\x00>\"])+ '>')")
+    pp_replace("missing digraph punctuator",'{"%:%:"} | ','')
+    pp_replace("pp-number without signed exponents",' | (["eEpP"] ["+-"])','')
+    pp_replace("preprocessing labels are diagnostic",'Undef . ControlLine','RenamedUndef . ControlLine',True)
     # Independent controls of the reference-side regular-language engine itself.
     for name,a,b,expected in [
         ("regex distributivity",ralt(rtext("ab"),rtext("ac")),rseq(rtext("a"),ralt(rtext("b"),rtext("c"))),True),
@@ -1108,9 +1330,14 @@ def main(argv=None):
             args.report.write_text(json.dumps(result,indent=2)+"\n")
         if result["ok"]:
             controls = len(result.get("controls", []))
-            print(f"N1570 coverage: 120 nonterminals / 520 original alternatives; "
-                  f"{result['phrase']['normalized_expected']} ordered phrase signatures; "
-                  "missing=0 invented=0; 6 exact lexical checks + rejected pp-number inclusion; "
+            pp = result["preprocessing"]
+            equal = sum(row["relation"] == "equal" for row in pp["tokens"]["checks"])
+            contained = sum(row["relation"] == "contains" for row in pp["tokens"]["checks"])
+            print(f"N1570 coverage: 143 nonterminals / 577 original alternatives; "
+                  f"{result['phrase']['normalized_expected']} ordered phrase signatures and "
+                  f"{pp['phrase']['normalized_expected']} preprocessing signatures; "
+                  f"missing=0 invented=0; 6 exact lexical checks + rejected pp-number inclusion; "
+                  f"preprocessing tokens {equal} exact + {contained} containing; "
                   f"{controls} controls; declared conditional boundaries apply.")
             return 0
         print("N1570 coverage refused: "+result.get("error",result.get("failure_stage","unknown mismatch")),file=sys.stderr)
@@ -1118,6 +1345,10 @@ def main(argv=None):
         for row in result.get("phrase",{}).get("invented",[])[:6]: print("invented: "+str(row),file=sys.stderr)
         for row in result.get("lexical",{}).get("exact_language_checks",[]):
             if not row["ok"]: print("lexical: "+str(row),file=sys.stderr)
+        for row in result.get("preprocessing",{}).get("phrase",{}).get("missing",[])[:6]: print("preprocessing missing: "+str(row),file=sys.stderr)
+        for row in result.get("preprocessing",{}).get("phrase",{}).get("invented",[])[:6]: print("preprocessing invented: "+str(row),file=sys.stderr)
+        for row in result.get("preprocessing",{}).get("tokens",{}).get("checks",[]):
+            if not row["ok"]: print("preprocessing token: "+str(row),file=sys.stderr)
         return 1
     except (CoverageError,OSError,ValueError) as error:
         print("N1570 coverage refused: "+str(error),file=sys.stderr)

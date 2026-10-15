@@ -119,6 +119,20 @@ Ordinary make builds mixed C/.cesta sources through cesta.mk and native compiler
 The emitted program links no Cesta runtime. Dependency files name authored
 sources and native headers. Presentation work happens during the build.
 
+Lossless source/1 documents also build through cesta cc. Their decoded main
+file supplies C source bytes; the document path supplies its file identity,
+quoted-include directory and file-name builtins. Main-file self-inclusion uses
+those supplied bytes again. The preprocessor emits .i files, and native target,
+optimization and link flags remain in force. Mixed source/1, compact and C
+inputs share that route when a source document is present. Plain C builds
+without a source document retain the ordinary compiler route.
+
+Generated .i files depend on their complete expanded contents and are published
+atomically. Make dependencies name original inputs and actually read headers,
+including empty headers; -MMD/-MM omit system headers. Leading ./ is omitted
+from dependency spellings. This source/1 build route does not provide compact
+directive editing, conditional-alternative admission or macro-use folding.
+
 Generic Lean inverse and switching laws, kernel admission of actual rule/schema
 data, independent case replay, corpus tree laws and matching native objects are
 separate evidence. These do not assert a universal proof of the native parser,

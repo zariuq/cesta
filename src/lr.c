@@ -159,15 +159,31 @@ static bool apply_policies(const CeGrammar *g, CeLR *out, CeError *error) {
         CeActionCell *cell = &out->cells[i]; cell->policy = -1; cell->selected = 0;
         if (cell->len < 2) continue;
         ++out->ambiguities; cell->selected = -1;
-        if (cell->len == 2) for (size_t j = 0; j < g->npolicies; ++j) {
-            CeConflictPolicy policy = g->policies[j];
-            size_t terminal = policy.terminal < 0 ? g->nsymbols : (size_t)policy.terminal;
-            if (i%out->symbols != terminal) continue;
-            for (size_t preferred = 0; preferred < 2; ++preferred)
-                if (action_matches(cell->actions[preferred],policy.preferred) && action_matches(cell->actions[1-preferred],policy.alternative)) {
-                    if (cell->policy >= 0) return ce_error(error,0,"two declared policies match one LR conflict cell");
-                    cell->policy = (int)j; cell->selected = (int)preferred;
+        for (size_t preferred = 0; preferred < cell->len; ++preferred) {
+            int owner = -1; bool admitted = true;
+            for (size_t alternative = 0; alternative < cell->len; ++alternative) {
+                if (alternative == preferred) continue;
+                int found = -1;
+                for (size_t j = 0; j < g->npolicies; ++j) {
+                    CeConflictPolicy policy = g->policies[j];
+                    size_t terminal = policy.terminal < 0 ? g->nsymbols : (size_t)policy.terminal;
+                    if (policy.terminal != -3 && i%out->symbols != terminal) continue;
+                    if (cell->len != 2 && policy.next != -2) continue;
+                    if (action_matches(cell->actions[preferred],policy.preferred) &&
+                        action_matches(cell->actions[alternative],policy.alternative)) {
+                        if (found >= 0) return ce_error(error,0,"two declared policies match one LR action pair");
+                        found = (int)j;
+                    }
                 }
+                if (found < 0) admitted = false;
+                else owner = found;
+            }
+            /* Every losing action needs a direct declared preference. Chains,
+               cycles and undeclared alternatives never choose a winner. */
+            if (admitted) {
+                if (cell->selected >= 0) return ce_error(error,0,"declared policies select two LR actions");
+                cell->policy = owner; cell->selected = (int)preferred;
+            }
         }
         if (cell->selected < 0) ++out->conflicts;
     }
@@ -284,10 +300,19 @@ bool ce_lr_parse(const CeGrammar *g, const CeLR *p, const CeTokens *tokens, CeFo
                 pos == tokens->len ? (int)g->nsymbols : tokens->data[pos].symbol;
             CeActionCell cell = p->cells[(size_t)stack[len-1].state*p->symbols+(size_t)terminal];
             if (!cell.len) {
-                size_t offset = marker ? tokens->data[pos-1].offset : pos < tokens->len ? tokens->data[pos].offset : 0;
-                ce_error(error,offset,"LR syntax rejected after %zu of %zu tokens, expecting terminal %.*s",pos,tokens->len,
+                size_t offset = marker ? tokens->data[pos-1].offset : pos < tokens->len ? tokens->data[pos].offset :
+                    tokens->len ? tokens->data[tokens->len-1].offset+tokens->data[tokens->len-1].text.len : 0;
+                char expected[256] = {0}; size_t used = 0;
+                for (size_t i = 0; i < p->symbols; ++i) {
+                    if (!p->cells[(size_t)stack[len-1].state*p->symbols+i].len) continue;
+                    CeText name = i < g->nsymbols ? g->symbols[i].name : (CeText){(unsigned char *)"EOF",3};
+                    if (used+name.len+(used ? 2 : 0)+1 >= sizeof(expected)) break;
+                    if (used) { memcpy(expected+used,", ",2); used += 2; }
+                    memcpy(expected+used,name.data,name.len); used += name.len; expected[used] = 0;
+                }
+                ce_error(error,offset,"LR syntax rejected after %zu of %zu tokens: unexpected %.*s; expected %s",pos,tokens->len,
                     terminal < (int)g->nsymbols ? (int)g->symbols[terminal].name.len : 3,
-                    terminal < (int)g->nsymbols ? (const char *)g->symbols[terminal].name.data : "EOF"); break;
+                    terminal < (int)g->nsymbols ? (const char *)g->symbols[terminal].name.data : "EOF",expected); break;
             }
             int selected = cell.selected;
             if (cell.policy >= 0) {

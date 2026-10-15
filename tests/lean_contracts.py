@@ -17,6 +17,8 @@ MODULES = [
     "Mettapedia.GSLT.Parsing.NonemptySeparatorRefactoring",
     "Mettapedia.GSLT.Parsing.CanonicalProjectionSExprAdapter",
     "Mettapedia.GSLT.Parsing.SortedCodecMetadataAdmission",
+    "Mettapedia.GSLT.LanguageDef.FreshNamedContext",
+    "Mettapedia.GSLT.Parsing.SortedSchemaExtension",
 ]
 PRESENTATION_MODULES = [
     "Mettapedia.GSLT.Parsing.ExactPresentation",
@@ -115,7 +117,7 @@ def main():
         raise RuntimeError("the named theorem audit did not account for every declaration")
     summary = {"modules":files,"named_theorems":len(theorems),"axioms":dependencies,
                "seconds":round(time.monotonic()-started,2),
-               "boundary":"These generic codec, module-algebra, projection, admission and checked-presentation proofs, and the C11 arithmetic and type-compatibility models, do not prove the native C parser, scope hook, binder, elaborator, byte wire format, native compact adapter or C compiler semantics."}
+               "boundary":"These generic codec, module-algebra, projection, admission, checked-presentation and finite binder-naming proofs, and the C11 arithmetic and type-compatibility models, do not prove the native C parser, scope hook, binder, elaborator, byte wire format, native compact adapter, macro expander or C compiler semantics."}
     (output / "summary.json").write_text(json.dumps(summary,indent=2)+"\n")
     print(f"Lean contracts: {len(files)} strict module checks; {len(theorems)} named theorem axiom audits; {summary['seconds']}s")
 

@@ -11,6 +11,8 @@ struct CeModule {
     size_t ndecls;
     bool loading;
 };
+CeText ce_module_path(const CeModule *module) { return module->path; }
+CeText ce_module_source(const CeModule *module) { return module->source; }
 typedef struct { CeText name; CePresentation value; } Binding;
 typedef struct { Binding *bindings; size_t len; } Environment;
 
@@ -392,7 +394,8 @@ bool ce_module_theory(CeCatalog *c, CeModule *m, const char *theory, CePresentat
     return free_theory(c,owner,decl,out,error,0);
 }
 
-bool ce_presentation_grammar(CeCatalog *c, const CePresentation *p, CeGrammar *out, CeError *error) {
+bool ce_presentation_signature(CeCatalog *c, const CePresentation *p,
+                               const CeGrammar *external, CeGrammar *out, CeError *error) {
     FILE *file = tmpfile();
     if (!file) return ce_error(error,0,"cannot allocate grammar rendering stream");
     bool ok = true;
@@ -407,7 +410,11 @@ bool ce_presentation_grammar(CeCatalog *c, const CePresentation *p, CeGrammar *o
         CeText text = {ce_alloc(&c->arena,(size_t)size+1),(size_t)size};
         rewind(file);
         if (fread(text.data,1,text.len,file) != text.len) ok = ce_error(error,0,"cannot read grammar rendering stream");
-        else ok = ce_grammar_read(out,text,error) && ce_grammar_finish(out,error);
+        else ok = ce_grammar_read(out,text,error) && ce_grammar_finish_signature(out,external,error);
     }
     fclose(file); return ok;
+}
+
+bool ce_presentation_grammar(CeCatalog *c, const CePresentation *p, CeGrammar *out, CeError *error) {
+    return ce_presentation_signature(c,p,NULL,out,error);
 }

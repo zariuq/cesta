@@ -11,7 +11,7 @@ import subprocess
 import time
 import re
 
-from corpus import BUILD_EPOCH, ROOT, cetta_units, named_workfile, run, sha, swi_units
+from corpus import BUILD_EPOCH, CETTA_CHECKOUT, ROOT, cetta_units, named_workfile, run, sha, swi_units
 
 PRESENTATIONS = ("ast/1", "compact-c/1", "compact-c/2", "cmera-style/1")
 COMPACT = ("compact-c/1", "compact-c/2")
@@ -56,6 +56,40 @@ def required(arguments, cwd=ROOT, environment=None):
     if not record["accepted"]:
         raise RuntimeError(f"{arguments}: {record['diagnostic']}")
     return record, data
+
+
+def snapshot_he(output, python):
+    """A private copy of the HE reader (its Python package and extension), taken
+    while the files hold still: another build may rewrite the live copy during
+    a run, and the run must read one HE throughout."""
+    source = ROOT.parent / "hyperon/hyperon-experimental/python"
+    def files():
+        found = sorted(source.glob("hyperonpy*.so"))
+        found += sorted(p for p in (source / "hyperon").rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+        return found
+    for attempt in range(10):
+        listed = files()
+        before = [(p, p.stat().st_size, p.stat().st_mtime_ns) for p in listed]
+        contents = {p.relative_to(source): p.read_bytes() for p in listed}
+        if before != [(p, p.stat().st_size, p.stat().st_mtime_ns) for p in files()]:
+            time.sleep(10)
+            continue
+        digest = sha(b"".join(str(k).encode()+b"\0"+v for k, v in sorted(contents.items())))
+        target = output / ("he-"+digest[:16])
+        if not target.exists():
+            partial = output / ("he-"+digest[:16]+".partial")
+            shutil.rmtree(partial, ignore_errors=True)
+            for name, data in contents.items():
+                (partial / name).parent.mkdir(parents=True, exist_ok=True)
+                (partial / name).write_bytes(data)
+                shutil.copymode(source / name, partial / name)
+            partial.rename(target)
+        check = subprocess.run([str(python), "-c", "import hyperonpy, hyperon"], capture_output=True,
+                               env={**os.environ, "PYTHONPATH": str(target)})
+        if check.returncode == 0:
+            return target
+        time.sleep(10)
+    raise RuntimeError("the HE reader kept changing while it was being copied")
 
 
 def tool_manifest(python, environment):
@@ -293,8 +327,7 @@ def main():
     python = python_installations[0]
     environment = os.environ.copy()
     environment.update({"PYTHONDONTWRITEBYTECODE": "1", "SOURCE_DATE_EPOCH": BUILD_EPOCH,
-        "PYTHONPATH": os.pathsep.join([str(ROOT / "build/oracles/tokenizer"),
-            str(ROOT.parent / "hyperon/hyperon-experimental/python")]),
+        "PYTHONPATH": os.pathsep.join([str(ROOT / "build/oracles/tokenizer"), str(snapshot_he(output, python))]),
         "TIKTOKEN_CACHE_DIR": str(ROOT / "build/oracles/tokenizer-cache"),
         "CESTA_TOKENIZER_PYTHON": str(python)})
     binary_bytes = (ROOT / "build/cesta").read_bytes()
@@ -322,7 +355,7 @@ def main():
         directory.mkdir(exist_ok=True)
         work = directory / "work"
         work.mkdir(exist_ok=True)
-        checkout = ROOT.parent / ("hyperon/CeTTa" if corpus == "cetta" else "repos/swipl-devel")
+        checkout = (CETTA_CHECKOUT if corpus == "cetta" else ROOT.parent / "repos/swipl-devel")
         manifest = {"binary_sha256": sha(binary_bytes), "script_sha256": sha(Path(__file__).read_bytes()),
             "head": required(["git", "rev-parse", "HEAD"], checkout)[1].decode().strip(),
             "tracked_changes": required(["git", "status", "--porcelain", "--untracked-files=no"], checkout)[1].decode(),

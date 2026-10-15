@@ -4,7 +4,7 @@ CFLAGS ?= -O2 -g
 WARN = -std=c11 -Wall -Wextra -Wpedantic -Werror
 REFERENCE_SYNTAX ?= ../hyperon/MeTTaIL/GSLT/src/main/bnfc/metta_venus.cf
 REFERENCE_FIXTURES ?= ../hyperon/MeTTaIL/GSLT/src/test/module
-CETTA_SOURCE ?= ../hyperon/CeTTa/src
+CETTA_SOURCE ?= ../hyperon/cetta-cesta-corpus-opt-106cc2f2/src
 C11PARSER_TESTS ?= ../repos/C11parser/tests
 LIBSOURCES = src/base.c src/atom.c src/wire.c src/grammar.c src/dfa.c src/forest.c src/lr.c src/scope.c src/tree.c src/module.c src/compile.c src/metadata.c src/view.c src/bind.c src/ctype.c src/elaborate.c
 SOURCES = $(LIBSOURCES) src/main.c
@@ -22,11 +22,14 @@ build/embed: tools/embed.c
 	mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) $< -o $@
 
-build/language-data.c: build/embed build/C11.cf build/CGNU.cf grammar/TheoryModule.cf grammar/C11.profile grammar/CGNU.profile grammar/CGNUC11.profile grammar/CClang.profile grammar/CClangC11.profile presentations/CompactC.module presentations/CompactC2.module presentations/CMeraStyle.module
-	./build/embed C11Grammar build/C11.cf CGNUGrammar build/CGNU.cf TheoryModuleSyntax grammar/TheoryModule.cf C11Profile grammar/C11.profile CGNUProfile grammar/CGNU.profile CGNUC11Profile grammar/CGNUC11.profile CClangProfile grammar/CClang.profile CClangC11Profile grammar/CClangC11.profile CompactCModule presentations/CompactC.module CompactC2Module presentations/CompactC2.module CMeraStyleModule presentations/CMeraStyle.module > $@
+build/CPPGNU.cf: build/cesta-bootstrap grammar/CPreprocessing.module grammar/GNUPreprocessing.module grammar/TheoryModule.cf
+	./build/cesta-bootstrap module-grammar grammar/TheoryModule.cf grammar/GNUPreprocessing.module CPPGNU > $@
 
-build/cesta: $(SOURCES) src/cesta.h src/sema.h src/driver.c src/view_driver.c src/sema.c build/language-data.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/view_driver.c src/sema.c build/language-data.c -o $@
+build/language-data.c: build/embed build/C11.cf build/CGNU.cf build/CPPGNU.cf grammar/TheoryModule.cf grammar/C11.profile grammar/CGNU.profile grammar/CGNUC11.profile grammar/CClang.profile grammar/CClangC11.profile presentations/CompactC.module presentations/CompactC2.module presentations/CMeraStyle.module
+	./build/embed C11Grammar build/C11.cf CGNUGrammar build/CGNU.cf CPPGNUGrammar build/CPPGNU.cf TheoryModuleSyntax grammar/TheoryModule.cf C11Profile grammar/C11.profile CGNUProfile grammar/CGNU.profile CGNUC11Profile grammar/CGNUC11.profile CClangProfile grammar/CClang.profile CClangC11Profile grammar/CClangC11.profile CompactCModule presentations/CompactC.module CompactC2Module presentations/CompactC2.module CMeraStyleModule presentations/CMeraStyle.module > $@
+
+build/cesta: $(SOURCES) src/cesta.h src/sema.h src/pp.h src/native.h src/macro.h src/driver.c src/view_driver.c src/native.c src/macro.c src/sema.c src/source.c src/pp.c build/language-data.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/view_driver.c src/native.c src/macro.c src/sema.c src/source.c src/pp.c build/language-data.c -o $@
 
 build/test-foundation: tests/foundation.c $(LIBSOURCES) src/cesta.h
 	mkdir -p build
@@ -81,6 +84,72 @@ test-driver: build/cesta
 
 test: test-driver
 
+.PHONY: test-native-authoring
+test-native-authoring: build/cesta
+	python3 -B tests/native_authoring.py
+
+check test: test-native-authoring
+
+.PHONY: test-macro-engine
+test-macro-engine: build/cesta
+	python3 -B tests/macro_engine.py
+
+check test: test-macro-engine
+
+.PHONY: test-macro-native-names
+test-macro-native-names: build/cesta
+	python3 -B tests/macro_native_names.py
+
+check test: test-macro-native-names
+
+.PHONY: test-macro-definition-ports
+test-macro-definition-ports: build/cesta
+	python3 -B tests/macro_definition_ports.py
+
+check test: test-macro-definition-ports
+
+.PHONY: test-macro-port-admission
+test-macro-port-admission: build/cesta
+	python3 -B tests/macro_port_admission.py
+
+test: test-macro-port-admission
+
+.PHONY: test-macro-types test-macro-narrowing
+test-macro-types: build/cesta
+	python3 -B tests/macro_types.py
+
+test-macro-narrowing: build/cesta
+	python3 -B tests/macro_narrowing.py
+
+check test: test-macro-types test-macro-narrowing
+
+.PHONY: test-macro-worklists
+test-macro-worklists: build/cesta
+	python3 -B tests/macro_worklists.py
+
+check test: test-macro-worklists
+
+.PHONY: test-macro-sizes test-macro-probes
+test-macro-sizes: build/cesta
+	python3 -B tests/macro_sizes.py
+
+test-macro-probes: build/cesta
+	python3 -B tests/macro_probes.py
+
+check test: test-macro-sizes test-macro-probes
+
+.PHONY: test-macro-prescan
+test-macro-prescan: build/cesta
+	python3 -B tests/macro_prescan.py
+
+check test: test-macro-prescan
+
+.PHONY: test-macro-admission
+test-macro-admission: build/cesta
+	python3 -B tests/macro_admission.py
+
+test: test-macro-admission
+
 test-literal-bytes: build/cesta
 	python3 tests/literal_bytes.py
 
@@ -126,8 +195,9 @@ test-mutants: build/syntax-probe build/CGNU.cf
 
 test: test-mutants
 
-build/cetta-data-reader: tests/cetta_data_reader.c $(addprefix $(CETTA_SOURCE)/,atom.c symbol.c name_key.c parser.c) $(wildcard $(CETTA_SOURCE)/*.h)
-	$(CC) -std=c11 -O2 -g0 -pthread -ffunction-sections -fdata-sections -I$(CETTA_SOURCE) tests/cetta_data_reader.c $(addprefix $(CETTA_SOURCE)/,atom.c symbol.c name_key.c parser.c) -Wl,--gc-sections -lgmp -lm -o $@
+CETTA_READER_SOURCES = atom.c symbol.c name_key.c parser.c binding/frame_identity.c
+build/cetta-data-reader: tests/cetta_data_reader.c $(addprefix $(CETTA_SOURCE)/,$(CETTA_READER_SOURCES)) $(wildcard $(CETTA_SOURCE)/*.h)
+	$(CC) -std=c11 -O2 -g0 -pthread -ffunction-sections -fdata-sections -I$(CETTA_SOURCE) tests/cetta_data_reader.c $(addprefix $(CETTA_SOURCE)/,$(CETTA_READER_SOURCES)) -Wl,--gc-sections -lgmp -lm -o $@
 
 .PHONY: test-corpora test-c11parser
 test-corpora: build/cesta build/cetta-data-reader build/syntax-probe
@@ -234,6 +304,7 @@ test: test-presentation-semantics
 .PHONY: test-semantics test-semantic-corpora test-type-admission
 test-semantics: build/cesta
 	python3 -B tests/semantic_controls.py
+	python3 -B tests/conversion_boundaries.py
 
 test: test-semantics
 
@@ -256,5 +327,67 @@ test-qualification-controls:
 
 test: test-qualification-controls
 
+.PHONY: test-source test-source-core test-pp-core test-pp-corpora
+test-source: build/cesta
+	python3 -B tests/source_trees.py
+
+test-source-core: build/cesta
+	python3 -B tests/source_trees.py --core-only
+
+test-pp-core: build/cesta
+	python3 -B tests/pp_core.py
+
+test-pp-corpora: build/cesta
+	python3 -B tests/preprocessor_corpus.py $(PP_CORPUS_TEST_FLAGS)
+
+test: test-source test-pp-core test-pp-corpora
+
 # Local controls; `test` retains corpus and kernel qualification.
-check: test-foundation test-modules test-c test-presentations test-presentation-coverage test-semantics test-qualification-controls
+check: test-foundation test-modules test-c test-presentations test-presentation-coverage test-semantics test-qualification-controls test-source-core test-pp-core test-compiler-builds
+
+.PHONY: test-compiler-builds test-provenance-corpora test-provenance-core
+test-compiler-builds: build/cesta
+	python3 -B tests/compiler_builds.py
+
+test-provenance-corpora: build/cesta
+	python3 -B tests/provenance_corpus.py $(PROVENANCE_CORPUS_TEST_FLAGS)
+
+test-provenance-core: build/cesta
+	python3 -B tests/provenance_controls.py
+
+test: test-compiler-builds test-provenance-corpora test-provenance-core
+check: test-provenance-core
+
+.PHONY: test-gnu-extensions
+test-gnu-extensions: build/cesta
+	python3 -B tests/gnu_extensions.py
+
+check test: test-gnu-extensions
+
+.PHONY: test-unicode-names
+test-unicode-names: build/cesta
+	python3 -B tests/unicode_names.py
+
+check test: test-unicode-names
+
+.PHONY: test-source-driver
+test-source-driver: build/cesta
+	python3 -B tests/source_driver.py
+
+check test: test-source-driver
+
+.PHONY: test-schema-extension-admission
+test-schema-extension-admission: build/cesta test-lean
+	python3 -B tests/schema_extension_admission.py $(SCHEMA_EXTENSION_TEST_FLAGS)
+
+test: test-schema-extension-admission
+
+build/conflict-certificate: tests/conflict_certificate.c $(LIBSOURCES) src/cesta.h src/sema.h
+	mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) tests/conflict_certificate.c $(LIBSOURCES) -o $@
+
+.PHONY: test-conflict-admission
+test-conflict-admission: build/conflict-certificate build/C11.cf build/CGNU.cf
+	python3 -B tests/conflict_admission.py $(CONFLICT_TEST_FLAGS)
+
+test: test-conflict-admission

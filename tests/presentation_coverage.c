@@ -34,7 +34,7 @@ static CeTree *inhabit(const CeGrammar *g, int symbol, int parent,
                        CeArena *arena, unsigned char *active) {
     const CeSymbol *s = &g->symbols[symbol];
     if (s->kind == CE_TOKEN) {
-        const char *samples[] = {"x","1u","1.0","'a'","\"s\"","1","const","#pragma once"};
+        const char *samples[] = {"x","1u","1.0","'a'","\"s\"","1","const","#pragma once","#ident \"tree\""};
         for (size_t i = 0; i < sizeof(samples)/sizeof(*samples)+g->nsymbols; ++i) {
             CeText text;
             if (i < sizeof(samples)/sizeof(*samples)) text = ce_cstr(arena,samples[i]);
@@ -112,7 +112,11 @@ int main(int argc, char **argv) {
         CeViewStats stats = {0};
         require(ce_view_expand(&profile,surface,p->lhs,&specimen,&expanded,&stats,&error) &&
             ce_tree_equal(&g,admitted,expanded),error.message);
-        if (!stats.short_by_constructor[i]) fprintf(stderr,"no genuine short form: %.*s\n",(int)p->label.len,p->label.data);
+        if (!stats.short_by_constructor[i]) {
+            fprintf(stderr,"no genuine short form: %.*s\nAST: ",(int)p->label.len,p->label.data);
+            ce_tree_encode(&g,admitted,stderr); fputs("\nsurface: ",stderr);
+            ce_atom_write(surface,stderr); fputc('\n',stderr);
+        }
         if (constructors) { fputc(',',counts); fputc(',',cases); }
         fputs("{\"constructor\":",counts); ce_quote(counts,p->label);
         fprintf(counts,",\"nodes\":%llu,\"shortened\":%llu}",
@@ -134,7 +138,7 @@ int main(int argc, char **argv) {
     }
     fputs("]\n",cases); fputs("]\n",counts); fclose(cases); fclose(counts);
     require(covered == constructors,"every original root constructor has a genuine short form");
-    require(constructors == 299,"complete supported constructor accounting");
+    require(constructors == 312,"complete supported constructor accounting");
     printf("presentation coverage: %zu/%zu original root constructors shortened; %llu/%llu total specimen constructors; %u checks\n",
         covered,constructors,(unsigned long long)shortened,(unsigned long long)nodes,checks);
     ce_view_free(&profile); ce_catalog_free(&catalog); ce_grammar_free(&syntax);

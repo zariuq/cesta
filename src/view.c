@@ -461,8 +461,31 @@ static bool keys_admit(const CeGrammar *g, const AtomKeys *keys, const CeAtom *a
     if (atom->items[0]->kind == CE_ATOM_SYMBOL) return leafset_admits(g,&keys->heads,atom->items[0]);
     return keys->other_head;
 }
-/* Runtime admission allocates nothing: token positions decode the atom. */
-static bool position_admits(const CeViewProfile *profile, Position position, const CeAtom *atom) {
+/* Closed admission uses precomputed keys. Open extensions additionally follow
+   the declared pass graph to reach the appropriate syntax position. */
+static bool extension_sort_visit(const CeViewProfile *profile, const CeAtom *atom, int sort,
+                                  CeViewExtensionAccepts accepts, void *context, unsigned char *seen) {
+    int normal = profile->grammar->symbols[sort].sort;
+    if (seen[normal]) return false;
+    seen[normal] = 1;
+    if (accepts(context,atom,sort)) return true;
+    for (size_t i = 0; i < profile->len; ++i) {
+        const CeViewRule *rule = &profile->rules[i];
+        if (rule->shape == CE_VIEW_PASS && same_sort(profile->grammar,rule->result,sort) &&
+            extension_sort_visit(profile,atom,rule->arguments[0],accepts,context,seen)) return true;
+    }
+    return false;
+}
+static bool extension_sort_admits(const CeViewProfile *profile, const CeAtom *atom, int sort,
+                                   CeViewExtensionAccepts accepts, void *context) {
+    if (!accepts) return false;
+    unsigned char *seen = calloc(profile->grammar->nsymbols,1);
+    if (!seen) { fputs("cesta: out of memory\n",stderr); exit(2); }
+    bool ok = extension_sort_visit(profile,atom,sort,accepts,context,seen);
+    free(seen); return ok;
+}
+static bool position_admits(const CeViewProfile *profile, Position position, const CeAtom *atom,
+                            CeViewExtensionAccepts accepts, void *context) {
     const CeGrammar *g = profile->grammar;
     if (position.kind == POSITION_NONE) return false;
     if (position.kind == POSITION_ANY) return true;
@@ -477,11 +500,12 @@ static bool position_admits(const CeViewProfile *profile, Position position, con
         CeViewRule leaf = {.shape=CE_VIEW_LEXICAL,.arity=1,.arguments=&token,.argument_parents=&position.parent};
         return token_accepts(g,&leaf,atom,0);
     }
-    return keys_admit(g,keys,atom);
+    return keys_admit(g,keys,atom) || extension_sort_admits(profile,atom,position.sort,accepts,context);
 }
-static bool rule_admits(const CeViewProfile *profile, const CeViewRule *rule, const CeAtom *atom) {
+static bool rule_admits(const CeViewProfile *profile, const CeViewRule *rule, const CeAtom *atom,
+                        CeViewExtensionAccepts accepts, void *context) {
     for (size_t at = 0; at < atom->len; ++at)
-        if (!position_admits(profile,position_at(profile->grammar,rule,at,atom->len),atom->items[at])) return false;
+        if (!position_admits(profile,position_at(profile->grammar,rule,at,atom->len),atom->items[at],accepts,context)) return false;
     return true;
 }
 static size_t list_shortest(const CeGrammar *g, const CeViewRule *rule) {
@@ -788,7 +812,14 @@ done:
 
 typedef struct { const CeAtom *atom; const CeTree *tree; int sort; } CheckedSubtree;
 typedef struct { CheckedSubtree *entries; size_t capacity, len; } ViewCache;
-typedef struct { const CeViewProfile *profile; CeViewStats *stats; const ViewCache *cache; } Expansion;
+typedef struct {
+    const CeViewProfile *profile;
+    CeViewStats *stats;
+    const ViewCache *cache;
+    CeViewExtension extension;
+    CeViewExtensionAccepts accepts;
+    void *extension_context;
+} Expansion;
 
 static size_t subtree_hash(const CeAtom *atom, int sort) {
     uintptr_t value = (uintptr_t)atom >> 4;
@@ -849,10 +880,10 @@ static bool instantiate(Expansion *expansion, const CeViewTemplate *body, CeTree
     for (size_t i = 0; i < tree->len; ++i)
         if (!instantiate(expansion,body->children[i],args,arena,offset,&tree->children[i],error,depth+1)) return false;
     if (tree->production == -2) {
-        /* Direct list templates still pass AST length admission. */
-        CeAtom *exact = ce_tree_to_atom(expansion->profile->grammar,tree,arena); CeTree *admitted;
-        if (!ce_tree_decode_atom(expansion->profile->grammar,exact,tree->symbol,-1,arena,NULL,NULL,&admitted,error,depth+1)) return false;
-        tree->symbol = admitted->symbol;
+        /* Length admission depends on the list schema, not on serializing its
+           elements. Elements have already been admitted at their slot sorts. */
+        tree->symbol = ce_tree_list_symbol(expansion->profile->grammar,tree->symbol,tree->len);
+        if (tree->symbol < 0) return ce_error(error,offset,"list length is not admitted by the source grammar");
     }
     count_node(expansion,tree->production,true); *out = tree; return true;
 }
@@ -893,6 +924,18 @@ static bool expand_atom(void *context, const CeAtom *atom, int sort, int parent,
     Expansion *expansion = context; const CeViewProfile *profile = expansion->profile;
     const CeGrammar *g = profile->grammar;
     if (depth > 4096) return ce_error(error,atom->offset,"presentation nesting exceeds decoder stack depth");
+    if (expansion->extension) {
+        unsigned result = expansion->extension(expansion->extension_context,atom,sort,parent,
+            arena,out,expand_atom,context,error,depth);
+        if (result == CE_EXTENSION_ERROR) return false;
+        if (result == CE_EXTENSION_EXPANDED) {
+            if (!*out || (*out)->symbol < 0 || (size_t)(*out)->symbol >= g->nsymbols ||
+                !same_sort(g,sort,(*out)->symbol))
+                return ce_error(error,atom->offset,"extension returned the wrong grammar sort");
+            return true;
+        }
+        if (result != CE_EXTENSION_UNHANDLED) return ce_error(error,atom->offset,"invalid extension result");
+    }
     const CeTree *checked = cached_subtree(expansion->cache,atom,sort);
     if (checked) { *out = (CeTree *)checked; return true; }
     int actual = sort;
@@ -926,10 +969,10 @@ static bool expand_atom(void *context, const CeAtom *atom, int sort, int parent,
         else if (rule->shape == CE_VIEW_WORD) matches = atom->kind == CE_ATOM_SYMBOL && ce_equal(atom->text,rule->head);
         else if (rule->shape == CE_VIEW_EMPTY) matches = atom->kind == CE_ATOM_LIST && !atom->len;
         else if (rule->shape == CE_VIEW_TUPLE && atom->kind == CE_ATOM_LIST)
-            matches = form_matches(rule,atom) && (!rule->admit || rule_admits(profile,rule,atom));
+            matches = form_matches(rule,atom) && (!rule->admit || rule_admits(profile,rule,atom,expansion->accepts,expansion->extension_context));
         else if (headed(atom,rule->head)) {
             known_head = true;
-            matches = form_matches(rule,atom) && (!rule->admit || rule_admits(profile,rule,atom));
+            matches = form_matches(rule,atom) && (!rule->admit || rule_admits(profile,rule,atom,expansion->accepts,expansion->extension_context));
         }
         if (matches) {
             if (selected) return ce_error(error,atom->offset,"ambiguous presentation dispatch: %.*s and %.*s",
@@ -942,7 +985,8 @@ static bool expand_atom(void *context, const CeAtom *atom, int sort, int parent,
     if (!selected && passes > 1) for (size_t i = 0; i < profile->len; ++i) {
         const CeViewRule *rule = &profile->rules[i];
         if (rule->shape != CE_VIEW_PASS || !same_sort(g,rule->result,sort) ||
-            !keys_admit(g,&profile->keys->rules[g->symbols[rule->arguments[0]].sort],atom)) continue;
+            (!keys_admit(g,&profile->keys->rules[g->symbols[rule->arguments[0]].sort],atom) &&
+             !extension_sort_admits(profile,atom,rule->arguments[0],expansion->accepts,expansion->extension_context))) continue;
         if (selected) return ce_error(error,atom->offset,"ambiguous unheaded presentation dispatch");
         selected = rule;
     } else if (!selected) selected = pass;
@@ -976,7 +1020,14 @@ bool ce_view_expand(const CeViewProfile *profile, const CeAtom *surface, int sor
         stats->short_by_constructor = calloc(stats->capacity,sizeof(*stats->short_by_constructor));
         if (!stats->by_constructor || !stats->short_by_constructor) { fputs("cesta: out of memory\n",stderr); exit(2); }
     }
-    Expansion expansion = {profile,stats,NULL};
+    Expansion expansion = {.profile=profile,.stats=stats};
+    return expand_atom(&expansion,surface,sort,-1,arena,out,error,0);
+}
+
+bool ce_view_expand_open(const CeViewProfile *profile, const CeAtom *surface, int sort,
+                         CeArena *arena, CeTree **out, CeViewExtension extension,
+                         CeViewExtensionAccepts accepts, void *context, CeError *error) {
+    Expansion expansion = {.profile=profile,.extension=extension,.accepts=accepts,.extension_context=context};
     return expand_atom(&expansion,surface,sort,-1,arena,out,error,0);
 }
 
@@ -1055,7 +1106,7 @@ static bool view_tree(const CeViewProfile *profile, const CeTree *tree, int sort
         }
         candidate->offset = tree->offset;
         CeArena checked = {0}; CeTree *expanded; CeError refusal = {{0},0};
-        Expansion expansion = {profile,NULL,cache};
+        Expansion expansion = {.profile=profile,.cache=cache};
         bool exact = expand_atom(&expansion,candidate,sort,-1,&checked,&expanded,&refusal,0) && ce_tree_equal(g,tree,expanded);
         ce_arena_free(&checked);
         if (exact) { cache_subtree(cache,candidate,sort,tree); *out = candidate; return true; }

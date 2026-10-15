@@ -1,0 +1,4 @@
+??=define Q 7
+int q = Q ??/
++ 1;
+int r = 1 ??' 2;

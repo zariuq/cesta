@@ -1,0 +1,99 @@
+Module MacroControls {
+  Theory Arithmetic() {
+    Empty Terms {
+      Twice . Expr ::= "(" "twice-once" Expr ")";
+      Ordered . Expr ::= "(" "ordered-sum" Expr Expr ")";
+      Lazy . Expr ::= "(" "choose-lazy" Expr Expr Expr ")";
+      Repeated . Expr ::= "(" "repeat-twice" Expr ")";
+      Local . Expr ::= "(" "local-plus-one" Expr ")";
+      Increment . Expr ::= "(" "increment-place" Expr ")";
+      When . Statement ::= "(" "when" Expr Statement ")";
+    }
+    Equations {
+      (Twice x) == (Macro "cesta-macro/1"
+        (Profile "gnu11")
+        (Arguments (Arg x (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals)
+        (Template ("+" (Argument x) (Argument x))));
+      (Ordered x y) == (Macro "cesta-macro/1"
+        (Profile "gnu11")
+        (Arguments
+          (Arg x (CType int) "value" (Evaluation "once"))
+          (Arg y (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals)
+        (Template ("+" (Argument x) (Argument y))));
+      (Lazy c yes no) == (Macro "cesta-macro/1"
+        (Profile "gnu11")
+        (Arguments
+          (Arg c (CType int) "value" (Evaluation "once"))
+          (Arg yes (CType int) "value" (Evaluation "deferred"))
+          (Arg no (CType int) "value" (Evaluation "deferred")))
+        (Result (CType int) "value")
+        (Locals)
+        (Template ("?:" (Argument c) (Argument yes) (Argument no))));
+      (Repeated x) == (Macro "cesta-macro/1"
+        (Profile "gnu11")
+        (Arguments (Arg x (CType int) "value" (Evaluation "repeat" 2)))
+        (Result (CType int) "value")
+        (Locals)
+        (Template ("," (Argument x) (Argument x))));
+      (Local x) == (Macro "cesta-macro/1"
+        (Profile "gnu11")
+        (Arguments (Arg x (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals (Local tmp "ordinary"))
+        (Template (block
+          (var int (LocalRef "ordinary" tmp) (Argument x))
+          ("+" (LocalRef "ordinary" tmp) 1))));
+      (Increment x) == (Macro "cesta-macro/1"
+        (Profile "gnu11")
+        (Arguments (Arg x (CType int) "addressable-modifiable" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals)
+        (Template ("+=" (Argument x) 1)));
+      (When c body) == (Macro "cesta-macro/1"
+        (Profile "c11")
+        (Arguments
+          (Arg c (CType int) "value" (Evaluation "once"))
+          (Arg body (CType void) "syntax" (Evaluation "syntax")))
+        (Result (CType void) "statement")
+        (Locals)
+        (Template ("if" (Argument c) (Argument body))));
+    }
+  }
+  Theory WrongRepeat() {
+    Empty Terms { Bad . Expr ::= "(" "bad" Expr ")"; }
+    Equations {
+      (Bad x) == (Macro "cesta-macro/1" (Profile "gnu11")
+        (Arguments (Arg x (CType int) "value" (Evaluation "repeat" 1)))
+        (Result (CType int) "value") (Locals)
+        (Template ("+" (Argument x) (Argument x))));
+    }
+  }
+  Theory MissingBinder() {
+    Empty Terms { Bad . Expr ::= "(" "bad" ")"; }
+    Equations {
+      (Bad) == (Macro "cesta-macro/1" (Profile "gnu11") (Arguments)
+        (Result (CType int) "value") (Locals)
+        (Template (LocalRef "ordinary" tmp)));
+    }
+  }
+  Theory MissingDeclaration() {
+    Empty Terms { Bad . Expr ::= "(" "bad" ")"; }
+    Equations {
+      (Bad) == (Macro "cesta-macro/1" (Profile "gnu11") (Arguments)
+        (Result (CType int) "value") (Locals (Local tmp "ordinary"))
+        (Template (LocalRef "ordinary" tmp)));
+    }
+  }
+  Theory WrongNamespace() {
+    Empty Terms { Bad . Expr ::= "(" "bad" ")"; }
+    Equations {
+      (Bad) == (Macro "cesta-macro/1" (Profile "gnu11") (Arguments)
+        (Result (CType int) "value") (Locals (Local tmp "tag"))
+        (Template (block (var int (LocalRef "tag" tmp) 0) 1)));
+    }
+  }
+}

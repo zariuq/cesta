@@ -14,6 +14,9 @@ import traceback
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_EPOCH = "1791633600"
+# CeTTa is read from a worktree pinned at a committed state of its opt branch,
+# never from a tree under active development; re-pin by changing this path.
+CETTA_CHECKOUT = ROOT.parent / "hyperon/cetta-cesta-corpus-opt-106cc2f2"
 
 
 def run(arguments, cwd=ROOT, data=None):
@@ -65,7 +68,7 @@ def named_workfile(directory, basename):
 
 
 def cetta_units(flags_file):
-    checkout = ROOT.parent / "hyperon/CeTTa"
+    checkout = CETTA_CHECKOUT
     values = dict(line.split("=", 1) for line in flags_file.read_text().splitlines())
     compiler = shlex.split(values["CC"])
     flags = shlex.split(values["CPPFLAGS"]) + shlex.split(values["CFLAGS"])
@@ -245,7 +248,7 @@ def main():
         reader = target
     options.cesta, options.grammar, options.profile = snapshot / "cesta",snapshot / "grammar.cf",snapshot / options.profile.name
     (snapshot / "inputs.json").write_text(json.dumps(inputs,indent=2)+"\n")
-    checkout = ROOT.parent / ("hyperon/CeTTa" if options.corpus == "cetta" else "repos/swipl-devel")
+    checkout = (CETTA_CHECKOUT if options.corpus == "cetta" else ROOT.parent / "repos/swipl-devel")
     head = run(["git","rev-parse","HEAD"],checkout)[1].decode().strip()
     status = run(["git","status","--porcelain","--untracked-files=no"],checkout)[1].decode()
     qualification_script = sha(Path(__file__).read_bytes())

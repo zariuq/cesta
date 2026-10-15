@@ -5,7 +5,7 @@ from collections import Counter
 import json
 from pathlib import Path
 
-from corpus import ROOT, run, sha
+from corpus import CETTA_CHECKOUT, ROOT, run, sha
 from syntax_mutants import Probe
 
 
@@ -26,7 +26,7 @@ def main():
         profile = ROOT / ("grammar/CGNUC11.profile" if corpus == "cetta" else "grammar/CGNU.profile")
         if sha((ROOT / "build/CGNU.cf").read_bytes()) != summary["inputs"]["grammar_sha256"]:
             raise RuntimeError("qualified grammar changed before constructor inventory")
-        cwd = ROOT.parent / ("hyperon/CeTTa" if corpus == "cetta" else "repos/swipl-devel/build")
+        cwd = (CETTA_CHECKOUT if corpus == "cetta" else ROOT.parent / "repos/swipl-devel/build")
         probe = Probe(ROOT / "build/CGNU.cf",profile)
         total,files = Counter(),Counter()
         rows = []

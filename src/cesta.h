@@ -139,6 +139,7 @@ void ce_grammar_free(CeGrammar *grammar);
 int ce_symbol(CeGrammar *grammar, CeText name, unsigned kind);
 bool ce_grammar_read(CeGrammar *grammar, CeText source, CeError *error);
 bool ce_grammar_finish(CeGrammar *grammar, CeError *error);
+bool ce_grammar_finish_signature(CeGrammar *grammar, const CeGrammar *external, CeError *error);
 bool ce_profile_read(CeGrammar *grammar, CeText source, CeError *error);
 bool ce_profile_load(CeGrammar *grammar, const char *path, CeError *error);
 typedef struct { CeText name, source; } CeProfileSource;
@@ -204,6 +205,7 @@ bool ce_scope_typedef(const CeScope *scope, CeText name);
 bool ce_scope_hook(CeScope *scope, unsigned action, int node, CeError *error);
 bool ce_scope_closed(const CeScope *scope, CeError *error);
 CeText ce_name_key(CeArena *arena, CeText name);
+bool ce_name_equal(CeText first, CeText second);
 
 typedef struct CeTree {
     int symbol, production;
@@ -211,6 +213,10 @@ typedef struct CeTree {
     size_t len, offset;
     CeText spelling;
 } CeTree;
+/* An open source fragment is admitted only by the authoring interface. Closed
+   AST codecs and printers never treat its bytes as a parsed C constructor. */
+enum { CE_TREE_SOURCE = -3 };
+int ce_tree_list_symbol(const CeGrammar *grammar, int required, size_t length);
 bool ce_tree_from_forest(const CeGrammar *grammar, const CeForest *forest,
                          const CeTokens *tokens, CeArena *arena,
                          CeTree **out, CeError *error);
@@ -229,6 +235,8 @@ bool ce_tree_print(const CeGrammar *grammar, const CeTree *tree, int sort,
                     FILE *file, CeError *error);
 bool ce_tree_print_prepared(const CeGrammar *grammar, const CeDFA *lexer,
                             const CeTree *tree, int sort, FILE *file, CeError *error);
+bool ce_tree_print_open(const CeGrammar *grammar, const CeTree *tree, int sort,
+                        FILE *file, CeError *error);
 bool ce_tree_equal(const CeGrammar *grammar, const CeTree *a, const CeTree *b);
 bool ce_tree_label(const CeGrammar *grammar, const CeTree *tree, const char *label);
 bool ce_metadata_export(const CeGrammar *grammar, FILE *file, CeError *error);
@@ -270,6 +278,8 @@ typedef struct {
 } CeCatalog;
 void ce_catalog_free(CeCatalog *catalog);
 bool ce_module_load(CeCatalog *catalog, const char *path, CeModule **out, CeError *error);
+CeText ce_module_path(const CeModule *module);
+CeText ce_module_source(const CeModule *module);
 bool ce_module_read(CeCatalog *catalog, CeText identity, CeText source,
                     CeModule **out, CeError *error);
 bool ce_module_check(CeCatalog *catalog, CeModule *module, CeError *error);
@@ -277,6 +287,8 @@ bool ce_module_theory(CeCatalog *catalog, CeModule *module, const char *name,
                        CePresentation *out, CeError *error);
 bool ce_presentation_grammar(CeCatalog *catalog, const CePresentation *presentation,
                              CeGrammar *out, CeError *error);
+bool ce_presentation_signature(CeCatalog *catalog, const CePresentation *presentation,
+                               const CeGrammar *external, CeGrammar *out, CeError *error);
 
 enum { CE_VIEW_SLOT, CE_VIEW_NODE, CE_VIEW_LIST };
 typedef struct CeViewTemplate {
@@ -322,6 +334,15 @@ bool ce_view_compile(CeViewProfile *profile, const CeGrammar *ast,
                      const char *name, unsigned version, CeError *error);
 bool ce_view_expand(const CeViewProfile *profile, const CeAtom *surface, int sort,
                     CeArena *arena, CeTree **out, CeViewStats *stats, CeError *error);
+enum { CE_EXTENSION_UNHANDLED, CE_EXTENSION_EXPANDED, CE_EXTENSION_ERROR };
+typedef bool (*CeViewExtensionAccepts)(void *context, const CeAtom *atom, int sort);
+typedef unsigned (*CeViewExtension)(void *context, const CeAtom *atom, int sort,
+                                    int parent, CeArena *arena, CeTree **out,
+                                    CeAtomDecoder recurse, void *recurse_context,
+                                    CeError *error, size_t depth);
+bool ce_view_expand_open(const CeViewProfile *profile, const CeAtom *surface, int sort,
+                         CeArena *arena, CeTree **out, CeViewExtension extension,
+                         CeViewExtensionAccepts accepts, void *context, CeError *error);
 bool ce_view_tree(const CeViewProfile *profile, const CeTree *tree, int sort,
                   CeArena *arena, CeAtom **out, CeError *error);
 bool ce_view_rules_export(const CeViewProfile *profile, FILE *file, CeError *error);

@@ -105,6 +105,9 @@ bool ce_token_symbol_representation(const CeGrammar *g, int symbol) {
 }
 
 void ce_tree_encode(const CeGrammar *g, const CeTree *t, FILE *file) {
+    if (t->production == CE_TREE_SOURCE) {
+        fputs("(c:OpenSource ",file); ce_quote(file,t->spelling); fputc(')',file); return;
+    }
     if (t->production == -1) {
         if (ce_token_symbol_representation(g, t->symbol)) {
             if (plain_identifier(t->spelling)) fwrite(t->spelling.data, 1, t->spelling.len, file);
@@ -178,6 +181,10 @@ static int source_list(const CeGrammar *g, int required, size_t len) {
         if (source_reachable(g,required,(int)i,seen)) { selected = (int)i; break; }
     }
     free(seen); return selected;
+}
+
+int ce_tree_list_symbol(const CeGrammar *g, int required, size_t len) {
+    return source_list(g,required,len);
 }
 
 static bool decode_nested(const CeGrammar *g, const CeAtom *atom, int sort, int parent,
@@ -266,6 +273,12 @@ bool ce_tree_decode(const CeGrammar *g, CeText source, int sort, CeArena *a, CeT
 }
 
 CeAtom *ce_tree_to_atom(const CeGrammar *g, const CeTree *tree, CeArena *arena) {
+    if (tree->production == CE_TREE_SOURCE) {
+        CeAtom *atom = ce_atom_new(arena,CE_ATOM_LIST,(CeText){NULL,0},2);
+        atom->items[0] = ce_atom_new(arena,CE_ATOM_SYMBOL,ce_cstr(arena,"c:OpenSource"),0);
+        atom->items[1] = ce_atom_new(arena,CE_ATOM_TEXT,tree->spelling,0);
+        atom->offset = tree->offset; return atom;
+    }
     if (tree->production == -1) {
         if (!ce_token_symbol_representation(g,tree->symbol)) return ce_atom_new(arena,CE_ATOM_TEXT,tree->spelling,0);
         if (plain_identifier(tree->spelling)) return ce_atom_new(arena,CE_ATOM_SYMBOL,tree->spelling,0);
@@ -293,7 +306,7 @@ bool ce_tree_equal(const CeGrammar *g, const CeTree *a, const CeTree *b) {
 typedef struct {
     FILE *file;
     size_t block_depth, group_depth, *group_floors, floor_capacity;
-    bool line_start, pending_break;
+    bool line_start, pending_break, open_source;
     unsigned previous;
     CeText previous_text;
     CeDFA lexer;
@@ -503,6 +516,14 @@ static bool render_body(const CeGrammar *g, const CeTree *t, int sort, CePrinter
 
 static bool render(const CeGrammar *g, const CeTree *t, int sort, CePrinter *out,
                    CeError *error, unsigned char *active, size_t depth) {
+    if (t->production == CE_TREE_SOURCE) {
+        if (!out->open_source) return ce_error(error,t->offset,"open C source requires the native authoring printer");
+        if (!same_sort(g,sort,t->symbol)) return ce_error(error,t->offset,"open C source has the wrong grammar sort");
+        print_break(out);
+        fwrite(t->spelling.data,1,t->spelling.len,out->file);
+        if (t->spelling.len && t->spelling.data[t->spelling.len-1] != '\n') fputc('\n',out->file);
+        return !ferror(out->file) || ce_error(error,t->offset,"cannot print open C source");
+    }
     for (size_t i = 0; i < g->ngroupings; ++i) if (g->groupings[i].production == t->production) {
         const CeGrouping *group = &g->groupings[i];
         if (group->parent >= 0 && (group->parent != out->parent ||
@@ -532,6 +553,13 @@ bool ce_tree_print_prepared(const CeGrammar *g, const CeDFA *lexer, const CeTree
 
 bool ce_tree_print(const CeGrammar *g, const CeTree *tree, int sort, FILE *file, CeError *error) {
     return ce_tree_print_prepared(g,NULL,tree,sort,file,error);
+}
+
+bool ce_tree_print_open(const CeGrammar *g, const CeTree *tree, int sort, FILE *file, CeError *error) {
+    unsigned char *active = ce_resize(NULL,g->nsymbols,1);
+    CePrinter out = {.file=file,.line_start=true,.parent=-1,.open_source=true};
+    bool ok = render(g,tree,sort,&out,error,active,0);
+    free(out.group_floors); ce_dfa_free(&out.lexer); free(active); return ok;
 }
 
 bool ce_token_value(CeArena *arena, CeText spelling, CeText *out, CeError *error) {

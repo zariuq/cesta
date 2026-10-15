@@ -19,7 +19,7 @@ USE = re.compile(rb"^ \(use (\d+) (\d+) ([a-z-]+) (\d+|\(\))( folded)?\)$", re.M
 EXPR = re.compile(r'^ \(expr (\d+) (\d+) "((?:[^"\\]|\\.)*)" (lvalue|rvalue|designator)(.*)\)$')
 CONVERSION = re.compile(r'\(([A-Za-z]+) "(?:[^"\\]|\\.)*"\)')
 CAST = re.compile(r"\(cast ([A-Za-z]+)\)")
-CENSUS = re.compile(rb"^ \(conversion (\d+) (\d+) ([a-z-]+) (\d+) (\d+)\)$", re.M)
+CENSUS = re.compile(rb"^ \(conversion (\d+) (\d+) ([a-z-]+) (\d+) (\d+)(?: \(store-bits [1-9]\d*\))?\)$", re.M)
 COUNT = re.compile(rb"^ \(count (\w+) ([a-z-]+) (\d+)\)$", re.M)
 WARNING = re.compile(r"^[^:]+:(\d+):(\d+): warning: (.*) \[-W(conversion|sign-conversion|float-conversion)\]$", re.M)
 ARITHMETIC = re.compile(rb"\(arithmetic (\d+) (\d+)\)")
@@ -137,7 +137,7 @@ def layouts(path, unit, types_data, *compiler_flags):
     return result
 
 
-def categories_and_conversions(binary, unit, path, tree, data=None):
+def categories_and_conversions(binary, unit, path, tree, data=None, details=None):
     """Every expression's value category and implicit conversion chain agree with clang's."""
     nodes = {}
     stack = [(tree, [])]
@@ -189,6 +189,9 @@ def categories_and_conversions(binary, unit, path, tree, data=None):
         best = min((normalized(c) for c in candidates), key=lambda c: (c[0] != ours) + (c[1] != conversions))
         agrees = best[0] == ours and best[1] == conversions and (cast is None or best[2] is None or cast.group(1) == best[2])
         result["agree" if agrees else "disagree"] += 1
+        if not agrees and details is not None and len(details) < 30:
+            details.append({"begin":begin,"end":end,"source":text[begin:end].decode(errors="replace"),
+                            "ours":[ours,conversions,cast.group(1) if cast else None],"clang":best})
     return result
 
 

@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import time
 
-from corpus import ROOT, cetta_units, run, sha, swi_units
+from corpus import CETTA_CHECKOUT, ROOT, cetta_units, run, sha, swi_units
 
 
 def main():
@@ -36,7 +36,7 @@ def main():
             cwd, units, _ = swi_units(ROOT / "build/swipl-build-commands.txt")
         if options.only:
             units = [u for u in units if Path(u["source"]).name in options.only]
-        checkout = ROOT.parent / ("hyperon/CeTTa" if corpus == "cetta" else "repos/swipl-devel")
+        checkout = (CETTA_CHECKOUT if corpus == "cetta" else ROOT.parent / "repos/swipl-devel")
         commit = run(["git", "rev-parse", "HEAD"], checkout)[1].decode().strip()
         tracked = run(["git", "status", "--porcelain", "--untracked-files=no"], checkout)[1].decode()
         directory = output / corpus

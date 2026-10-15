@@ -2,9 +2,12 @@
 
 import copy
 import unittest
+import tempfile
+from pathlib import Path
 
 import qualification_cache as cache
 from semantic_oracles import compare_ir
+from source_qualification import source_state, dependencies
 
 
 class EvidenceControls(unittest.TestCase):
@@ -39,6 +42,30 @@ class EvidenceControls(unittest.TestCase):
         record["certificate"]["format"] = "unknown"
         self.assertFalse(cache.current(record, self.inputs, self.unit))
 
+
+class SourceEvidenceControls(unittest.TestCase):
+    def test_header_location_change_invalidates_unchanged_tokens(self):
+        root = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory(dir=root / "build") as directory:
+            work = Path(directory)
+            (work / "unit.c").write_text('#include "included.h"\n')
+            header = work / "included.h"
+            header.write_text("int /* one */ value;\n")
+            unit = {"cwd": str(work), "compiler": ["gcc"], "flags": ["-std=c11"], "source": "unit.c"}
+            before = source_state(unit, work)
+            self.assertEqual(before, source_state(unit, work))
+            (work / "unrelated.h").write_text("unrelated\n")
+            self.assertEqual(before, source_state(unit, work))
+            header.write_text("int /* a longer comment */ value;\n")
+            after = source_state(unit, work)
+            for compiler in ("gcc", "clang"):
+                self.assertEqual(before[compiler]["preprocessed_sha256"], after[compiler]["preprocessed_sha256"])
+                self.assertNotEqual(before[compiler]["dependencies_sha256"], after[compiler]["dependencies_sha256"])
+
+    def test_make_escaped_dependency_names(self):
+        data = b"cesta-qualified: a\\ b.h c$$d.h " + bytes([92, 10]) + b" e\\#f.h\n"
+        names = dependencies(data, "/project")
+        self.assertEqual(names, ["/project/a b.h", "/project/c$d.h", "/project/e#f.h"])
 
 class IRControls(unittest.TestCase):
     def call(self, align, intrinsic="memcpy", value="false"):

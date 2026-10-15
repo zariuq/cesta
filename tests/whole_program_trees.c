@@ -89,6 +89,7 @@ static CeTree *derive(const CeGrammar *g, int symbol, int target, int parent,
         else if (ce_is(s->name,"CCharacter")) text = "'a'";
         else if (ce_is(s->name,"CString")) text = "\"s\"";
         else if (ce_is(s->name,"CPragma")) text = "#pragma GCC diagnostic push";
+        else if (ce_is(s->name,"CIdentDirective")) text = "#ident \"tree\"";
         if (!text) return NULL;
         t->spelling = ce_cstr(a,text); return t;
     }

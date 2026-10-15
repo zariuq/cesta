@@ -19,6 +19,7 @@ const char *const ce_conversion_names[] = {
 
 typedef struct {
     unsigned aligned;             /* largest aligned(N); 0 when absent */
+    unsigned enum_layout;         /* first packed (1) or aligned (2) attribute */
     bool packed, has_mode, transparent_union;
     unsigned mode_bytes;          /* mode(QI/HI/SI/DI/TI/word) */
     bool mode_complex, mode_float;
@@ -124,11 +125,16 @@ static bool attributes(Elab *e, const CeTree *t, Attributes *a) {
     }
     switch (kind_of(e,t)) {
     case CE_K_GNUAttribute: return attributes(e,t->children[1],a);
+    case CE_K_GNUEnumAttributes:
+        return attributes(e,t->children[0],a);
     case CE_K_GNUAttributeQualifier: return attributes(e,t->children[0],a);
     case CE_K_GNUAttributeItem: {
         CeText w = attribute_word(e,t->children[0]);
-        if (ce_is(w,"packed")) a->packed = true;
-        else if (ce_is(w,"aligned")) { if (e->sema->abi->max_align > a->aligned) a->aligned = e->sema->abi->max_align; }
+        if (ce_is(w,"packed")) { a->packed = true; if (!a->enum_layout) a->enum_layout = 1; }
+        else if (ce_is(w,"aligned")) {
+            if (!a->enum_layout) a->enum_layout = 2;
+            if (e->sema->abi->max_align > a->aligned) a->aligned = e->sema->abi->max_align;
+        }
         else if (ce_is(w,"transparent_union")) a->transparent_union = true;
         return true;
     }
@@ -137,6 +143,7 @@ static bool attributes(Elab *e, const CeTree *t, Attributes *a) {
         const CeTree *arguments = t->children[1];
         const CeTree *list = kind_of(e,arguments) == CE_K_GNUAttributeArguments ? arguments->children[0] : NULL;
         if (ce_is(w,"aligned") && list && list->len == 1) {
+            if (!a->enum_layout) a->enum_layout = 2;
             long long n;
             if (!constant_value(e,list->children[0],&n)) return false;
             if ((unsigned)n > a->aligned) a->aligned = (unsigned)n;
@@ -233,6 +240,8 @@ static bool specifier_word(Elab *e, const CeTree *t, Words *w, Spec *s) {
         return true;
     }
     switch (kind_of(e,t)) {
+    case CE_K_GNUAttributeSpecifiers:
+        return (!s || attributes(e,t->children[0],&s->attributes)) && specifier_word(e,t->children[1],w,s);
     case CE_K_UniqueDeclarationSpecifiers: case CE_K_UniqueSpecifierQualifiers:
     case CE_K_PrimitiveDeclarationSpecifiers: case CE_K_PrimitiveSpecifierQualifiers:
     case CE_K_PrefixedDeclarationSpecifiers: case CE_K_PrefixedSpecifierQualifiers:
@@ -252,8 +261,8 @@ static bool specifier_word(Elab *e, const CeTree *t, Words *w, Spec *s) {
         return true;
     }
     case CE_K_FunctionSpecifier: return true;
-    case CE_K_AlignmentSpecifier: {
-        const CeTree *a = t->children[0]; unsigned align;
+    case CE_K_AlignmentSpecifier: case CE_K_AlignasType: case CE_K_AlignasExpression: {
+        const CeTree *a = kind_of(e,t) == CE_K_AlignmentSpecifier ? t->children[0] : t; unsigned align;
         if (kind_of(e,a) == CE_K_AlignasType) {
             CeType *type; if (!type_name(e,a->children[0],&type)) return false;
             align = ce_type_align(e->sema,type);
@@ -741,15 +750,35 @@ static bool record_specifier(Elab *e, const CeTree *t, const Attributes *outer, 
     return true;
 }
 
+static unsigned packed_enum_kind(Elab *e, long long low, long long high, bool wide) {
+    static const unsigned signed_kinds[] = {CE_T_SCHAR,CE_T_SHORT,CE_T_INT,CE_T_LONG,CE_T_LLONG};
+    static const unsigned unsigned_kinds[] = {CE_T_UCHAR,CE_T_USHORT,CE_T_UINT,CE_T_ULONG,CE_T_ULLONG};
+    const unsigned *kinds = low < 0 && !wide ? signed_kinds : unsigned_kinds;
+    for (size_t i = 0; i < sizeof(signed_kinds)/sizeof(*signed_kinds); ++i) {
+        unsigned bits = ce_kind_width(e->sema->abi,kinds[i]);
+        if (bits == 64) return kinds[i];
+        if (wide) continue;
+        if (kinds == signed_kinds) {
+            long long bound = 1LL << (bits-1);
+            if (low >= -bound && high < bound) return kinds[i];
+        } else if ((unsigned long long)high < (1ULL << bits)) return kinds[i];
+    }
+    return CE_T_ULLONG;
+}
+
 static bool enum_specifier(Elab *e, const CeTree *t, CeType **out) {
+    const CeTree *attributed = t;
+    while (kind_of(e,t) == CE_K_GNUAttributedEnum) t = t->children[0];
     CeEntity *tag = ce_pointer_get(&e->sema->tag_of,t);
     if (!tag) return fail(e,t,"enumeration specifier has no binding");
     CeType *type = ce_type_new(e->sema,CE_T_ENUM); type->tag = tag;
     if (!tag->record) { tag->record = ce_alloc(&e->sema->arena,sizeof(*tag->record)); *tag->record = (CeRecord){0}; }
     unsigned k = kind_of(e,t);
-    if (k == CE_K_EnumDefinition || k == CE_K_EnumDefinitionComma) {
-        const CeTree *list = t->children[1];
-        long long next = 0, low = 0, high = 0; bool any = false, wide = false;
+    if (k == CE_K_EnumDefinition || k == CE_K_EnumDefinitionComma ||
+        k == CE_K_GNUEnumDefinition || k == CE_K_GNUEnumDefinitionComma) {
+        bool leading = k == CE_K_GNUEnumDefinition || k == CE_K_GNUEnumDefinitionComma;
+        const CeTree *list = t->children[leading ? 2 : 1];
+        long long next = 0, low = 0, high = 0; bool any = false, wide = false, unsigned_next = false;
         CeEntity **members = ce_alloc(&e->sema->arena,list->len*sizeof(*members));
         for (size_t i = 0; i < list->len; ++i) {
             const CeTree *item = list->children[i];
@@ -759,17 +788,42 @@ static bool enum_specifier(Elab *e, const CeTree *t, CeType **out) {
                 CeExpr *x; if (!expression(e,item->children[1],&x)) return false;
                 if (!x->constant) return fail(e,item,"enumerator value is not an integer constant expression");
                 next = (long long)x->value;
-                if (!signed_type(e,x->type) && x->value > LLONG_MAX) wide = true;
+                unsigned_next = !signed_type(e,x->type) && x->value > LLONG_MAX;
             }
+            wide |= unsigned_next;
             entity->value = next; entity->value_known = true;
             /* §6.7.2.2p3, GNU: an enumerator within int has type int */
-            entity->type = next >= INT_MIN && next <= INT_MAX ? basic(e,CE_T_INT) : NULL;   /* else: the enumeration's integer type */
+            entity->type = !unsigned_next && next >= INT_MIN && next <= INT_MAX ? basic(e,CE_T_INT) : NULL;
+            if (e->sema->abi->enum_policy == CE_ENUM_INT) {
+                unsigned bits = ce_kind_width(e->sema->abi,CE_T_INT);
+                unsigned long long value = (unsigned long long)next & ((1ULL << bits)-1);
+                entity->value = value >= (1ULL << (bits-1))
+                    ? (long long)value - (1LL << bits) : (long long)value;
+                entity->type = basic(e,CE_T_INT);
+            }
             if (entity->type && kind_of(e,item) == CE_K_EnumeratorValue)
                 convert(e,ce_pointer_get(&e->sema->exprs,item->children[1]),entity->type);
             members[i] = entity;
-            if (!any || next < low) low = next;
-            if (!any || next > high) high = next;
-            any = true; ++next;
+            if (!unsigned_next && (!any || next < low)) low = next;
+            if (!unsigned_next && (!any || next > high)) high = next;
+            any = true;
+            unsigned long long incremented = (unsigned long long)next + 1ULL;
+            if (i+1 < list->len && kind_of(e,list->children[i+1]) == CE_K_Enumerator &&
+                unsigned_next && !incremented) return fail(e,item,"enumerator successor exceeds the supported integer range");
+            if (next == LLONG_MAX) unsigned_next = true;
+            next = (long long)incremented;
+        }
+        Attributes a = {0};
+        if (leading && !attributes(e,t->children[0],&a)) return false;
+        size_t nattributes = 0;
+        for (const CeTree *node = attributed; node != t; node = node->children[0]) ++nattributes;
+        const CeTree **tail = ce_alloc(&e->sema->arena,nattributes*sizeof(*tail));
+        size_t at = 0;
+        for (const CeTree *node = attributed; node != t; node = node->children[0]) tail[at++] = node->children[1];
+        while (at) if (!attributes(e,tail[--at],&a)) return false;
+        if (!e->sema->clang && a.packed && a.aligned) {
+            if (a.enum_layout == 2) a.packed = false;
+            a.aligned = 0;
         }
         /* GCC: unsigned int unless a value is negative; wider when needed. */
         unsigned kind;
@@ -779,15 +833,26 @@ static bool enum_specifier(Elab *e, const CeTree *t, CeType **out) {
         /* GNU long or unsigned long follows the target's 64-bit type */
         if (kind == CE_T_LONG && e->sema->abi->size[CE_T_LONG] < 8) kind = CE_T_LLONG;
         if (kind == CE_T_ULONG && e->sema->abi->size[CE_T_ULONG] < 8) kind = CE_T_ULLONG;
+        if (a.packed) kind = packed_enum_kind(e,low,high,wide);
         /* MSVC: every enumeration has type int */
         if (e->sema->abi->enum_policy == CE_ENUM_INT) kind = CE_T_INT;
-        Attributes a = {0};
-        if (a.packed) kind = kind;
         tag->record->enum_kind = kind;
         tag->record->complete = true;
         tag->record->size = e->sema->abi->size[kind];
         tag->record->align = e->sema->abi->align[kind];
-        for (size_t i = 0; i < list->len; ++i) if (!members[i]->type) members[i]->type = basic(e,kind);
+        if (a.aligned > tag->record->align) tag->record->align = a.aligned;
+        tag->record->packed = a.packed && e->sema->abi->enum_policy != CE_ENUM_INT;
+        tag->record->attributed = a.packed || a.aligned || a.has_mode;
+        /* In GNU's extended range, both compilers give every enumerator the
+           completed enumeration's integer type, including small members.
+           Earlier initializer references retain their point-of-use types. */
+        bool extended = wide || low < INT_MIN || high > INT_MAX;
+        for (size_t i = 0; i < list->len; ++i) {
+            if (!members[i]->type || extended) members[i]->type = basic(e,kind);
+            const CeTree *item = list->children[i];
+            if (kind_of(e,item) == CE_K_EnumeratorValue)
+                convert(e,ce_pointer_get(&e->sema->exprs,item->children[1]),members[i]->type);
+        }
     }
     *out = type;
     return true;
@@ -904,8 +969,8 @@ static unsigned conversion_kind(Elab *e, const CeType *from, const CeType *to, b
         if (from->kind == CE_T_POINTER) {
             /* only qualifiers added to the same pointee type: NoOp */
             const CeType *a = from->base, *b = to->base;
-            if (ce_type_same(ce_type_unqualified(e->sema,a),ce_type_unqualified(e->sema,b)))
-                return a->qualifiers == b->qualifiers && from->qualifiers == to->qualifiers ? 0 : CE_CONVERT_NoOp;
+            if (ce_type_similar(a,b))
+                return ce_type_same(from,to) ? 0 : CE_CONVERT_NoOp;
             return CE_CONVERT_BitCast;
         }
         if (null_pointer) return CE_CONVERT_NullToPointer;
@@ -1133,6 +1198,8 @@ static bool string_literal(Elab *e, const CeTree *node, CeExpr **out) {
 typedef struct { const char *name, *signature; bool variadic; } Builtin;
 static const Builtin builtins[] = {
     {"__builtin_expect","lll",false}, {"__builtin_dynamic_object_size","zPi",false},
+    {"__builtin_frame_address","pu",false}, {"__builtin_return_address","pu",false},
+    {"__builtin_prefetch","vP",true}, {"__builtin_stack_save","p",false}, {"__builtin_stack_restore","vp",false},
     {"__builtin_object_size","zPi",false}, {"__builtin_va_arg_pack_len","i",false},
     {"__builtin___memset_chk","ppizz",false}, {"__builtin___memmove_chk","ppPzz",false},
     {"__builtin___memcpy_chk","ppPzz",false}, {"__builtin___mempcpy_chk","ppPzz",false},
@@ -1260,7 +1327,21 @@ static CeType *conditional_type(Elab *e, const CeTree *at, CeExpr *a, CeExpr *b)
     CeType *ta = rvalue(e,a), *tb = rvalue(e,b);
     if (ce_type_arithmetic(ta) && ce_type_arithmetic(tb)) {
         CeType *c = ce_type_common(e->sema,ta,tb,a->bits,b->bits);
-        convert(e,a,c); convert(e,b,c); return c;
+        CeExpr *operands[] = {a,b};
+        for (size_t i = 0; i < 2; ++i) {
+            CeExpr *x = operands[i];
+            CeType *from = current(x);
+            unsigned count = x->nconversions;
+            convert(e,x,c);
+            /* A narrow unsigned bit-field is promoted even when the other
+               operand restores its declared unsigned type. Clang represents
+               this as one IntegralCast to the common result type. */
+            if (e->sema->clang && x->bits && ce_type_integer(from) &&
+                ce_type_integer(c) && x->nconversions == count &&
+                ce_promoted_kind(e->sema->abi,ce_type_integer_kind(from),x->bits) != ce_type_integer_kind(from))
+                add_conversion(x,CE_CONVERT_IntegralCast,c);
+        }
+        return c;
     }
     if (ce_type_void(ta) || ce_type_void(tb)) return basic(e,CE_T_VOID);
     if (ce_type_record(ta) && ce_type_record(tb)) return ce_type_unqualified(e->sema,ta);
@@ -1666,7 +1747,7 @@ static bool expression(Elab *e, const CeTree *t, CeExpr **out) {
         CeExpr *x = new_expr(e,t,lhs,CE_RVALUE);
         /* GCC: the value stored to a bit-field keeps the bit-field's width */
         x->bits = a->bits;
-        if (k == CE_K_Assign) { if (!converted(e,t,b,lhs)) return false; *out = x; return true; }
+        if (k == CE_K_Assign) { if (!converted(e,t,b,a->type)) return false; *out = x; return true; }
         CeType *tb = rvalue(e,b);
         if ((k == CE_K_AddAssign || k == CE_K_SubtractAssign) && lhs->kind == CE_T_POINTER) {
             if (ce_type_integer(tb)) convert(e,b,ce_type_promoted(s,tb,b->bits));
@@ -1854,6 +1935,22 @@ static bool call(Elab *e, const CeTree *t, CeExpr **out) {
     if (p->kind != CE_T_POINTER || p->base->kind != CE_T_FUNCTION) return fail(e,t,"called object is not a function");
     CeType *f = p->base;
     x->type = ce_type_unqualified(s,f->base);
+    CeText builtin_name = callee->builtin ? ce_sema_use(s,t->children[0]->children[0])->entity->name : (CeText){NULL,0};
+    if (ce_is(builtin_name,"__builtin_frame_address") || ce_is(builtin_name,"__builtin_return_address")) {
+        if (n != 1 || !args[0]->constant)
+            return fail(e,t,"frame and return address builtins need one constant level");
+        if (s->clang && (!ce_type_integer(args[0]->type) || (unsigned)args[0]->value > 65535))
+            return fail(e,t,"address builtin level must be an integer in [0, 65535]");
+    }
+    if (ce_is(builtin_name,"__builtin_prefetch")) {
+        if (s->clang && n > 3) return fail(e,t,"prefetch takes at most three arguments");
+        for (size_t i = 1; i < n && i < 3; ++i) {
+            if (!args[i]->constant || !ce_type_integer(args[i]->type))
+                return fail(e,list->children[i],"prefetch options must be constant integers");
+            if (s->clang && args[i]->value > (i == 1 ? 1u : 3u))
+                return fail(e,list->children[i],"prefetch option is outside its permitted range");
+        }
+    }
     bool va_start = callee->builtin && ce_is(ce_sema_use(s,t->children[0]->children[0])->entity->name,"__builtin_va_start");
     for (size_t i = 0; i < n; ++i) {
         if (va_start && i > 0) continue;   /* names the last parameter; not a value */
@@ -1923,6 +2020,23 @@ static size_t next_member(const CeType *t, size_t from) {
     CeRecord *r = t->tag->record;
     while (from < r->nmembers && !r->members[from].name.len && !r->members[from].anonymous) ++from;
     return from;
+}
+
+static void bitfield_initializer(Elab *e, const CeTree *init, CeType *type, unsigned bits) {
+    if (!bits) return;
+    for (;;) {
+        unsigned k = kind_of(e,init);
+        if (k == CE_K_InitializerList || k == CE_K_InitializerListComma) {
+            const CeTree *items = init->children[0];
+            if (items->len != 1) return;
+            init = element_initializer(e,items->children[0]);
+        } else {
+            if (k == CE_K_InitializerExpression) init = init->children[0];
+            CeExpr *x = ce_pointer_get(&e->sema->exprs,init);
+            if (x) { x->store_type = type; x->store_bits = bits; }
+            return;
+        }
+    }
 }
 
 /* Initialize one subobject of type `type` from the current item. */
@@ -2000,12 +2114,22 @@ static bool fill(Elab *e, CeType *type, Items *it, bool braced, long long *count
             const CeTree *list = k == CE_K_GNUOldArrayInitializer ? NULL : item->children[0];
             if (list && list->len > 1) {
                 if (!initialize_designated(e,sub,item,1,it)) return false;
-            } else if (!initialize_one(e,sub,it,count)) return false;
+            } else {
+                if (!initialize_one(e,sub,it,count)) return false;
+                if (!is_array) {
+                    CeMember *member = &type->tag->record->members[position];
+                    bitfield_initializer(e,element_initializer(e,item),sub,member->bitfield ? member->bit_width : 0);
+                }
+            }
         } else {
             if (!first && is_union) break;
             if (is_array ? (type->length >= 0 && (long long)position >= type->length) : position >= member_count(type)) break;
             CeType *sub = is_array ? type->base : type->tag->record->members[position].type;
             if (!initialize_one(e,sub,it,count)) return false;
+            if (!is_array) {
+                CeMember *member = &type->tag->record->members[position];
+                bitfield_initializer(e,element_initializer(e,item),sub,member->bitfield ? member->bit_width : 0);
+            }
         }
         first = false;
         ++position;
@@ -2020,6 +2144,7 @@ static bool fill(Elab *e, CeType *type, Items *it, bool braced, long long *count
 /* Apply designators from index `from` of an element's designator list. */
 static bool initialize_designated(Elab *e, CeType *type, const CeTree *item, size_t from, Items *it) {
     const CeTree *list = item->children[0];
+    unsigned bits = 0;
     for (size_t d = from; d < list->len; ++d) {
         const CeTree *designator = list->children[d];
         unsigned dk = kind_of(e,designator);
@@ -2028,6 +2153,7 @@ static bool initialize_designated(Elab *e, CeType *type, const CeTree *item, siz
             if (!ce_type_record(type) || !member_lookup(e,type,name,&m,0))
                 return fail(e,designator,"no member named %.*s",(int)name.len,name.data);
             type = m.type;
+            bits = m.bitfield ? m.bit_width : 0;
         } else {
             if (type->kind != CE_T_ARRAY) return fail(e,designator,"array designator in a non-array initializer");
             long long index, low = 0; ++e->folded;
@@ -2036,10 +2162,13 @@ static bool initialize_designated(Elab *e, CeType *type, const CeTree *item, siz
             --e->folded;
             if (!ok) return false;
             type = type->base;
+            bits = 0;
         }
     }
     long long ignored = 0;
-    return initialize_one(e,type,it,&ignored);
+    if (!initialize_one(e,type,it,&ignored)) return false;
+    bitfield_initializer(e,element_initializer(e,item),type,bits);
+    return true;
 }
 
 static bool initialize_list(Elab *e, CeType *type, const CeTree *list, CeType **completed) {
@@ -2259,9 +2388,13 @@ static bool statement(Elab *e, const CeTree *t) {
     case CE_K_ExpressionStatement: return full_expression(e,t->children[0],&x);
     case CE_K_Label: return statement(e,t->children[1]);
     case CE_K_GNUAttributedLabel: return statement(e,t->children[2]);
-    case CE_K_Case: case CE_K_GNUCaseRange: {
+    case CE_K_GNULabelDeclaration: return declaration(e,t->children[1]);
+    case CE_K_GNUAttributedLabelDeclaration: return declaration(e,t->children[2]);
+    case CE_K_GNUAttributeStatement: { Attributes a = {0}; return attributes(e,t->children[0],&a); }
+    case CE_K_Case: case CE_K_GNUCaseRange: case CE_K_GNUCaseDeclaration: case CE_K_GNUCaseRangeDeclaration: {
         if (!e->switch_labels) return fail(e,t,"case label outside a switch");
-        size_t values = kind_of(e,t) == CE_K_Case ? 1 : 2;
+        unsigned kind = kind_of(e,t);
+        size_t values = kind == CE_K_Case || kind == CE_K_GNUCaseDeclaration ? 1 : 2;
         unsigned long long endpoints[2];
         for (size_t i = 0; i < values; ++i) {
             if (!expression(e,t->children[i],&x)) return false;
@@ -2281,13 +2414,14 @@ static bool statement(Elab *e, const CeTree *t) {
             CaseRange *r = ce_alloc(&e->sema->arena,sizeof(*r));
             *r = (CaseRange){low,high,e->switch_labels->ranges}; e->switch_labels->ranges = r;
         }
-        return statement(e,t->children[values]);
+        return kind == CE_K_GNUCaseDeclaration || kind == CE_K_GNUCaseRangeDeclaration
+            ? declaration(e,t->children[values]) : statement(e,t->children[values]);
     }
-    case CE_K_Default:
+    case CE_K_Default: case CE_K_GNUDefaultDeclaration:
         if (!e->switch_labels) return fail(e,t,"default label outside a switch");
         if (e->switch_labels->has_default) return fail(e,t,"duplicate default label");
         e->switch_labels->has_default = true;
-        return statement(e,t->children[0]);
+        return kind_of(e,t) == CE_K_GNUDefaultDeclaration ? declaration(e,t->children[0]) : statement(e,t->children[0]);
     case CE_K_If: return condition(e,t->children[0]) && statement(e,t->children[1]);
     case CE_K_IfElse: return condition(e,t->children[0]) && statement(e,t->children[1]) && statement(e,t->children[2]);
     case CE_K_Switch: {
@@ -2366,7 +2500,7 @@ bool ce_elaborate(CeSema *sema, const CeTree *unit, CeError *error) {
         switch (kind_of(&e,x)) {
         case CE_K_ExternalFunction: if (!function_definition(&e,x->children[0])) return false; break;
         case CE_K_ExternalDeclaration: if (!declaration(&e,x->children[0])) return false; break;
-        case CE_K_GNUExternalPragma: case CE_K_GNUEmptyExternalDeclaration: case CE_K_GNUFileAsm: break;
+        case CE_K_GNUExternalPragma: case CE_K_GNUEmptyExternalDeclaration: case CE_K_GNUFileAsm: case CE_K_GNUIdent: break;
         default: return fail(&e,x,"unknown external declaration");
         }
     }

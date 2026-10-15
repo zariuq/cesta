@@ -1,6 +1,13 @@
 #include "cesta.h"
+#include "pp.h"
+#include "native.h"
+#include "macro.h"
 
 #include <string.h>
+
+#ifdef CE_BUILTIN_LANGUAGES
+CeText ce_builtin_CPPGNUGrammar(void);
+#endif
 
 static int diagnostic(const char *path, CeText source, const CeError *error) {
     size_t line = 1, column = 1;
@@ -16,11 +23,19 @@ int main(int argc, char **argv) {
     if (argc > 1 && (!strcmp(argv[1],"pack") || !strcmp(argv[1],"unpack"))) return ce_wire_command(argc,argv);
 #ifdef CE_BUILTIN_LANGUAGES
     if (argc > 1 && !strcmp(argv[1],"cc")) return ce_cc(argc-2,argv+2);
+    if (argc > 1 && !strcmp(argv[1],"expand")) return ce_expand_command(argc,argv);
+    if (argc > 1 && !strcmp(argv[1],"check-macros")) return ce_macro_command(argc,argv);
     if (argc > 1 && (!strcmp(argv[1],"view") || !strcmp(argv[1],"convert") || !strcmp(argv[1],"export-view-rules")))
         return ce_view_command(argc,argv);
     if (argc > 1 && (!strcmp(argv[1],"bind") || !strcmp(argv[1],"types") || !strcmp(argv[1],"probe") ||
                      !strcmp(argv[1],"explicit") || !strcmp(argv[1],"census") || !strcmp(argv[1],"abi-tables")))
         return ce_sema_command(argc,argv);
+    if (argc > 1 && (!strcmp(argv[1],"source") || !strcmp(argv[1],"source-bytes")))
+        return ce_pp_source_command(argc,argv,ce_builtin_CPPGNUGrammar());
+    if (argc > 1 && !strcmp(argv[1],"pp")) return ce_pp_command(argc,argv,ce_builtin_CPPGNUGrammar());
+    if (argc > 1 && !strcmp(argv[1],"read"))
+        for (int i = 2; i < argc; ++i)
+            if (!strcmp(argv[i],"--cc")) return ce_source_command(argc,argv,CE_COMPOSE_ORIGIN_COHERENT);
 #endif
     int compiler_arg = argc;
     if (argc > 1 && (!strcmp(argv[1],"build") || !strcmp(argv[1],"check-program") || !strcmp(argv[1],"run"))) {
@@ -46,13 +61,20 @@ int main(int argc, char **argv) {
                     strcmp(argv[1], "read") && strcmp(argv[1], "write") && strcmp(argv[1], "check-module") && strcmp(argv[1], "module-grammar") && strcmp(argv[1], "lr-table") && strcmp(argv[1], "parse-lr") && strcmp(argv[1],"build") && strcmp(argv[1],"check-program") && strcmp(argv[1],"run") && strcmp(argv[1],"export-metadata"))) {
         fputs("usage: cesta check-grammar GRAMMAR.cf\n"
               "       cesta cc [--cc COMPILER] FLAGS SOURCES.csexp [OBJECTS/LIBRARIES]\n"
+              "       cesta expand [--cc COMPILER] [--presentation native-c/1] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
+              "       cesta check-macros MODULE THEORY\n"
               "       cesta view --as PRESENTATION [--from PRESENTATION] [--std=c11|gnu11] INPUT\n"
               "       cesta convert --to PRESENTATION [--from PRESENTATION] [--std=c11|gnu11] INPUT\n"
               "       cesta export-view-rules --as PRESENTATION [--std=c11|gnu11]\n"
               "       cesta export-metadata GRAMMAR.cf [PROFILE]\n"
+              "       cesta source [--std=c11|gnu11] [--check|--tokens] SOURCE...\n"
+              "       cesta pp [--cc COMPILER] [-P] [-o OUTPUT] [--provenance MAP] COMPILER-FLAGS SOURCE\n"
+              "       cesta source-bytes SOURCE-DOCUMENT\n"
               "       cesta read [--std=c11|gnu11] PREPROCESSED-C\n"
+              "       cesta read --cc COMPILER COMPILER-FLAGS SOURCE\n"
               "       cesta write [--std=c11|gnu11] SEXP\n"
               "       cesta bind|types|probe|explicit|census [--std=c11|gnu11] [--dialect=gcc|clang] [--abi=ABI] PREPROCESSED-C\n"
+              "       cesta bind|types|census --json-lines --cc COMPILER COMPILER-FLAGS SOURCE\n"
               "       cesta abi-tables [--abi=ABI]\n"
               "       cesta check-module MODULE\n"
               "       cesta module-grammar MODULE THEORY\n"

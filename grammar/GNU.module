@@ -20,6 +20,8 @@ Module GNUCModule {
       GNUExternalPragma . ExternalDeclaration ::= GNUPragma;
       GNUBlockPragma . BlockItem ::= GNUPragma;
       GNUStructPragma . StructDeclaration ::= GNUPragma;
+      token CIdentDirective ('#' [" \t"]* {"ident"} [" \t"] (char - ["\n\r"])*);
+      GNUIdent . ExternalDeclaration ::= CIdentDirective;
       GNUEmptyExternalDeclaration . ExternalDeclaration ::= ";";
       GNUEmptyStructDeclaration . StructDeclaration ::= ";";
       GNUInt128 . PrimitiveTypeSpecifier ::= "__int128";
@@ -67,11 +69,18 @@ Module GNUCModule {
       GNUAttributeArguments . GNUAttributeArguments ::= [Expr1];
       GNUNoAttributeArguments . GNUAttributeArguments ::=;
       GNUAttributeQualifier . TypeQualifier ::= GNUAttribute;
+      GNUAttributeSpecifiers . DeclarationSpecifiers ::= [GNUAttribute] DeclarationSpecifiers;
       GNUAlignedMemberSpecifiers . SpecifierQualifiers ::= AlignmentSpecifier SpecifierQualifiers;
       GNUAttributedDeclarator . DirectDeclarator ::= DirectDeclarator GNUAttribute;
       GNUAttributedAbstractDeclarator . DirectAbstractDeclarator ::= DirectAbstractDeclarator GNUAttribute;
       GNUAttributedStructKind . StructOrUnion ::= StructOrUnion GNUAttribute;
       GNUAttributedStruct . StructSpecifier ::= StructSpecifier GNUAttribute;
+      -- Attributes on an enumeration definition retain their exact position.
+      GNUEnumAttributes . GNUEnumAttributes ::= [GNUAttribute];
+      GNUEnumDefinition . EnumSpecifier ::= "enum" GNUEnumAttributes OptionalIdent "{" [Enumerator] "}";
+      GNUEnumDefinitionComma . EnumSpecifier ::= "enum" GNUEnumAttributes OptionalIdent "{" [Enumerator] "," "}";
+      GNUEnumReference . EnumSpecifier ::= "enum" GNUEnumAttributes CGeneralName;
+      GNUAttributedEnum . EnumSpecifier ::= EnumSpecifier GNUAttribute;
       -- GNU asm names and statements.
       GNUAsmKeyword . GNUAsmKeyword ::= "__asm__";
       GNUAsmKeywordPrefix . GNUAsmKeyword ::= "__asm";
@@ -116,6 +125,12 @@ Module GNUCModule {
       -- Label attributes: GCC reads any number of attribute specifiers after the colon.
       separator nonempty GNUAttribute "";
       GNUAttributedLabel . LabeledStatement ::= CGeneralName ":" [GNUAttribute] Statement;
+      GNULabelDeclaration . LabeledStatement ::= CGeneralName ":" Declaration;
+      GNUAttributedLabelDeclaration . LabeledStatement ::= CGeneralName ":" [GNUAttribute] Declaration;
+      GNUCaseDeclaration . LabeledStatement ::= "case" Expr2 ":" Declaration;
+      GNUCaseRangeDeclaration . LabeledStatement ::= "case" Expr2 "..." Expr2 ":" Declaration;
+      GNUDefaultDeclaration . LabeledStatement ::= "default" ":" Declaration;
+      GNUAttributeStatement . Statement ::= [GNUAttribute] ";";
       GNUEmptyStruct . StructSpecifier ::= StructOrUnion OptionalIdent "{" "}";
       GNUEmptyTranslationUnit . TranslationUnit ::=;
     }

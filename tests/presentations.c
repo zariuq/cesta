@@ -49,6 +49,22 @@ static void refused(const CeViewProfile *profile, CeArena *arena, int sort, cons
     require(!ce_view_expand(profile,atom(arena,source),sort,arena,&tree,NULL,&error),"malformed surface is refused");
     require(error.message[0] != 0,"surface refusal identifies its cause");
 }
+typedef struct { int expression, returned; } OpenControl;
+static bool open_accepts(void *context, const CeAtom *atom, int sort) {
+    OpenControl *control = context;
+    return sort == control->expression && atom->kind == CE_ATOM_LIST && atom->len == 1 &&
+        atom->items[0]->kind == CE_ATOM_SYMBOL && ce_is(atom->items[0]->text,"foreign");
+}
+static unsigned open_control(void *context, const CeAtom *atom, int sort, int parent,
+                              CeArena *arena, CeTree **out, CeAtomDecoder recurse,
+                              void *nested, CeError *error, size_t depth) {
+    (void)parent; (void)recurse; (void)nested; (void)error; (void)depth;
+    if (!open_accepts(context,atom,sort)) return CE_EXTENSION_UNHANDLED;
+    OpenControl *control = context;
+    *out = ce_alloc(arena,sizeof(**out));
+    (*out)->symbol = control->returned; (*out)->production = CE_TREE_SOURCE;
+    (*out)->spelling = ce_cstr(arena,"(40 + 2)"); return CE_EXTENSION_EXPANDED;
+}
 static void case_export(FILE *file, const CeViewProfile *profile, CeArena *arena,
                          int sort, const CeTree *tree, bool first) {
     CeError error = {{0},0}; CeAtom *surface; CeTree *expanded;
@@ -250,6 +266,22 @@ int main(void) {
     case_export(compact2_cases,&compact2,&arena,declarator,variadic,false);
     case_export(compact2_cases,&compact2,&arena,unit,program,false);
     fputs("]\n",compact2_cases); fclose(compact2_cases);
+    OpenControl open = {expr,expr}; CeTree *open_tree;
+    CeAtom *foreign = atom(&arena,"(foreign)");
+    require(ce_view_expand_open(&compact2,foreign,expr,&arena,&open_tree,open_control,open_accepts,&open,&error),
+            "an explicitly open presentation admits a source fragment at its declared sort");
+    FILE *open_file = tmpfile(); require(open_file != NULL,"open presentation output");
+    require(ce_tree_print_open(&g,open_tree,expr,open_file,&error),"open source printer emits admitted fragments");
+    require(!ce_tree_print(&g,open_tree,expr,open_file,&error),"closed AST printer refuses open source fragments");
+    require(!ce_tree_print_open(&g,open_tree,statement,open_file,&error),"open source printer refuses a wrong surrounding sort");
+    fclose(open_file);
+    CeAtom *open_atom = ce_tree_to_atom(&g,open_tree,&arena); CeTree *closed;
+    require(!ce_tree_decode_atom(&g,open_atom,expr,-1,&arena,NULL,NULL,&closed,&error,0),
+            "opaque C is not silently admitted as a closed AST constructor");
+    open.returned = statement;
+    require(!ce_view_expand_open(&compact2,foreign,expr,&arena,&open_tree,open_control,open_accepts,&open,&error),
+            "extension implementation returning a wrong sort is refused");
+    refused(&compact2,&arena,expr,"(foreign)");
     ce_view_free(&compact2);
     /* Atom spelling is not subject to a host reader's numeric coercions. */
     CeAtom *numeric = atom(&arena,"(001 1u PI True \"bytes\\x00\\xff\" λ)");

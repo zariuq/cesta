@@ -1,0 +1,13 @@
+Module Arithmetic {
+  Theory Macros() {
+    Empty Terms { Square . Expr ::= "(" "square-once" Expr ")"; }
+    Equations {
+      (Square x) == (Macro "cesta-macro/1"
+        (Profile "gnu11")
+        (Arguments (Arg x (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals)
+        (Template ("*" (Argument x) (Argument x))));
+    }
+  }
+}

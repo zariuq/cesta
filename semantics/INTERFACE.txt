@@ -40,6 +40,13 @@ promotions and usual arithmetic conversions over all arithmetic types.
 
 Binding
 
+bind, types and census accept --json-lines before --cc. Each line contains the
+command and one record as explicitly tagged list, symbol and text atoms.
+Valid UTF-8 uses value; other byte strings use hexadecimal bytes. Numeric
+spelling remains a symbol, so transport never changes an atom's kind.
+Source preprocessing adds original spelling positions and macro expansion
+chains to records. Refusals use the same original positions and expansion notes.
+
 Ordinary identifiers follow the profile's scope program: the scope hook data
 that classifies typedef names during parsing is executed again over the
 tree. The parser and binder therefore use one declared scope policy; their

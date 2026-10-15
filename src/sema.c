@@ -1,7 +1,9 @@
 /* The C semantic layer's context and commands: `cesta bind` exports name
    binding, and `cesta types` exports elaborated C types. */
 
+#define _POSIX_C_SOURCE 200809L
 #include "sema.h"
+#include "pp.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +46,81 @@ static void write_name(FILE *file, CeText name) {
     else ce_quote(file,name);
 }
 
+/* When Cesta preprocessed the input, each printed offset also gets the
+   position it was spelled at and the expansions that produced it. */
+static const CePPResult *located;
+static CeText named(const char *s) { return (CeText){(unsigned char *)s,strlen(s)}; }
+CeText ce_builtin_CPPGNUGrammar(void);
+
+static bool json_utf8(CeText text) {
+    for (size_t i = 0; i < text.len;) {
+        unsigned c = text.data[i++], n, minimum;
+        if (c < 128) continue;
+        if (c >= 194 && c <= 223) { n = 1; minimum = 128; c &= 31; }
+        else if (c >= 224 && c <= 239) { n = 2; minimum = 2048; c &= 15; }
+        else if (c >= 240 && c <= 244) { n = 3; minimum = 65536; c &= 7; }
+        else return false;
+        while (n--) {
+            if (i >= text.len || (text.data[i] & 192) != 128) return false;
+            c = (c << 6) | (text.data[i++] & 63);
+        }
+        if (c < minimum || c > 1114111 || (c >= 55296 && c <= 57343)) return false;
+    }
+    return true;
+}
+static void json_text(FILE *file, CeText text) {
+    fputc('"',file);
+    for (size_t i = 0; i < text.len; ++i) {
+        unsigned c = text.data[i];
+        if (c == '"' || c == '\\') { fputc('\\',file); fputc((int)c,file); }
+        else if (c < 32) fprintf(file,"\\u%04x",c);
+        else fputc((int)c,file);
+    }
+    fputc('"',file);
+}
+static void json_atom(FILE *file, const CeAtom *atom) {
+    if (atom->kind == CE_ATOM_LIST) {
+        fputs("{\"kind\":\"list\",\"items\":[",file);
+        for (size_t i = 0; i < atom->len; ++i) {
+            if (i) fputc(',',file);
+            json_atom(file,atom->items[i]);
+        }
+        fputs("]}",file);
+    } else {
+        fprintf(file,"{\"kind\":\"%s\",",atom->kind == CE_ATOM_SYMBOL ? "symbol" : "text");
+        if (json_utf8(atom->text)) { fputs("\"value\":",file); json_text(file,atom->text); }
+        else {
+            fputs("\"bytes\":\"",file);
+            for (size_t i = 0; i < atom->text.len; ++i) fprintf(file,"%02x",atom->text.data[i]);
+            fputc('"',file);
+        }
+        fputc('}',file);
+    }
+}
+static bool json_records(CeArena *arena, CeText data, const char *command, CeError *error) {
+    CeAtom *root;
+    if (!ce_atom_read(arena,data,&root,error) || root->kind != CE_ATOM_LIST || !root->len)
+        return ce_error(error,0,"analysis did not produce a record sequence");
+    for (size_t i = 1; i < root->len; ++i) {
+        fputs("{\"command\":",stdout); json_text(stdout,named(command));
+        fputs(",\"record\":",stdout); json_atom(stdout,root->items[i]); fputs("}\n",stdout);
+    }
+    return !ferror(stdout);
+}
+
+static void locate(FILE *file, size_t offset) {
+    if (!located) return;
+    const CePPOrigin *o = ce_pp_origin(located,offset);
+    if (!o) return;
+    fputs(" (at ",file); ce_quote(file,named(o->file)); fprintf(file," %u %u",o->line,o->column);
+    for (const CePPExpansion *e = o->expansion; e; e = e->parent) {
+        fputs(" (from ",file); ce_quote(file,e->macro); fputc(' ',file);
+        ce_quote(file,named(e->definition_file)); fprintf(file," %u ",e->definition_line);
+        ce_quote(file,named(e->file)); fprintf(file," %u %u)",e->line,e->column);
+    }
+    fputc(')',file);
+}
+
 /* (entity ID KIND NAME LINKAGE SCOPE DECLARATION-OFFSET) and
    (use OFFSET ENTITY ROLE VISIBLE-OFFSET), offsets into the parsed source. */
 bool ce_sema_bindings_export(const CeSema *sema, FILE *file) {
@@ -55,13 +132,16 @@ bool ce_sema_bindings_export(const CeSema *sema, FILE *file) {
         fprintf(file," (entity %zu %s ",e->id,entity_kind_name(e->kind));
         write_name(file,e->name);
         fprintf(file," %s %s ",linkage[e->linkage],scope[e->scope]);
-        if (e->declaration) fprintf(file,"%zu)\n",e->declaration->offset); else fputs("())\n",file);
+        if (e->declaration) { fprintf(file,"%zu",e->declaration->offset); locate(file,e->declaration->offset); fputs(")\n",file); }
+        else fputs("())\n",file);
     }
     for (size_t i = 0; i < sema->nuses; ++i) {
         const CeUse *u = &sema->uses[i];
         fprintf(file," (use %zu %zu %s ",u->node->offset,u->entity->id,role_name(u->role));
         if (u->visible) fprintf(file,"%zu",u->visible->offset); else fputs("()",file);
-        fputs(u->folded ? " folded)\n" : ")\n",file);
+        if (u->folded) fputs(" folded",file);
+        locate(file,u->node->offset);
+        fputs(")\n",file);
     }
     fputs(")\n",file);
     return !ferror(file);
@@ -196,6 +276,7 @@ static void types_walk(CeSema *sema, const CeTree *t, FILE *file) {
         if (x->bits) fprintf(file," (bits %u)",x->bits);
         if (x->constant) fprintf(file," (value %llu)",x->value);
         if (x->folded) fputs(" (folded)",file);
+        locate(file,span->begin);
         fputs(")\n",file);
     }
     for (size_t i = 0; i < t->len; ++i) types_walk(sema,t->children[i],file);
@@ -476,6 +557,10 @@ static void explicit_emit(Explicitor *x, const CeTree *t) {
     const CeType *target = NULL;
     for (unsigned i = 0; e && i < e->nconversions; ++i)
         if (representation_conversion(e->conversions[i].kind)) target = e->conversions[i].to;
+    /* Atomic initialization belongs to the destination object. Casting to an
+       atomic pointer would discard the constant-expression status of a null
+       initializer in Clang; emit its underlying representation type. */
+    if (target && (target->qualifiers & CE_Q_ATOMIC)) target = ce_type_unqualified(x->sema,target);
     /* narrower than both the operand and the right target, so the cast loses values */
     unsigned narrowest = 0;
     if (target && ce_type_integer(target) && ce_type_integer(e->type)) {
@@ -550,6 +635,26 @@ static unsigned conversion_class(CeSema *sema, const CeType *from, const CeType 
     return CLASS_PRESERVING;
 }
 typedef struct { CeSema *sema; FILE *file; size_t counts[2][CLASS_COUNT]; bool list; } Census;
+static unsigned bitfield_store_class(CeSema *sema, const CeExpr *value, const CeType *target, unsigned bits) {
+    unsigned kind = ce_type_integer_kind(target);
+    if (kind == CE_T_BOOL) return CLASS_TO_BOOLEAN;
+    unsigned width = ce_kind_width(sema->abi,kind);
+    if (bits >= width) return CLASS_PRESERVING;
+    if (value->constant && ce_type_integer(value->type)) {
+        unsigned long long v = value->value;
+        if (width < 64) {
+            unsigned long long mask = (1ULL << width)-1;
+            v &= mask;
+            if (ce_kind_signed(sema->abi,kind) && (v & (1ULL << (width-1)))) v |= ~mask;
+        }
+        if (ce_kind_signed(sema->abi,kind)) {
+            long long bound = 1LL << (bits-1);
+            return (long long)v >= -bound && (long long)v < bound ? CLASS_PRESERVING : CLASS_NARROWING;
+        }
+        return v < (1ULL << bits) ? CLASS_PRESERVING : CLASS_NARROWING;
+    }
+    return CLASS_NARROWING;
+}
 static void census_walk(Census *c, const CeTree *t, const Extent *parent) {
     const CeExpr *x = ce_sema_expr(c->sema,t);
     const Extent *span = extent_of(c->sema,t);
@@ -562,9 +667,17 @@ static void census_walk(Census *c, const CeTree *t, const Extent *parent) {
                 unsigned k = conversion_class(c->sema,ce_type_unqualified(c->sema,from),ce_type_unqualified(c->sema,to),x);
                 ++c->counts[x->constant][k];
                 /* compilers locate an operator's conversion at the operator */
-                if (c->list && k != CLASS_PRESERVING && k != CLASS_POINTER)
-                    fprintf(c->file," (conversion %zu %zu %s %zu %zu)\n",span->begin,span->end,class_names[k],
-                            parent ? parent->begin : span->begin,parent ? parent->end : span->end);
+                if (c->list && k != CLASS_PRESERVING && k != CLASS_POINTER) {
+                    size_t at = parent ? parent->begin : span->begin;
+                    fprintf(c->file," (conversion %zu %zu %s %zu %zu",span->begin,span->end,class_names[k],
+                            at,parent ? parent->end : span->end);
+                    if (located) {
+                        fputs(" (types ",c->file); write_type(c->sema,c->file,from);
+                        fputc(' ',c->file); write_type(c->sema,c->file,to); fputc(')',c->file);
+                        locate(c->file,span->begin);
+                    }
+                    fputs(")\n",c->file);
+                }
             }
             from = to;
         }
@@ -573,9 +686,30 @@ static void census_walk(Census *c, const CeTree *t, const Extent *parent) {
             CeExpr value = {.type=x->computation};
             unsigned k = conversion_class(c->sema,x->computation,x->type,&value);
             ++c->counts[0][k];
-            if (c->list && k != CLASS_PRESERVING && k != CLASS_POINTER)
-                fprintf(c->file," (conversion %zu %zu %s %zu %zu)\n",span->begin,span->end,class_names[k],
-                        span->begin,span->end);
+            if (c->list && k != CLASS_PRESERVING && k != CLASS_POINTER) {
+                fprintf(c->file," (conversion %zu %zu %s %zu %zu",span->begin,span->end,class_names[k],span->begin,span->end);
+                if (located) {
+                    fputs(" (types ",c->file); write_type(c->sema,c->file,x->computation);
+                    fputc(' ',c->file); write_type(c->sema,c->file,x->type); fputc(')',c->file);
+                    locate(c->file,span->begin);
+                }
+                fputs(")\n",c->file);
+            }
+        }
+        unsigned kind = ce_sema_kind(c->sema,t);
+        if (x->store_bits || (x->bits && (kind == CE_K_Assign || x->computation))) {
+            CeExpr computed = {.type=x->computation};
+            const CeExpr *value = x->store_bits ? x : kind == CE_K_Assign ? ce_sema_expr(c->sema,t->children[1]) : &computed;
+            unsigned bits = x->store_bits ? x->store_bits : x->bits;
+            const CeType *target = x->store_bits ? x->store_type : x->type;
+            unsigned k = bitfield_store_class(c->sema,value,target,bits);
+            ++c->counts[value->constant][k];
+            if (c->list && k != CLASS_PRESERVING) {
+                fprintf(c->file," (conversion %zu %zu %s %zu %zu (store-bits %u)",span->begin,span->end,
+                        class_names[k],span->begin,span->end,bits);
+                if (located) locate(c->file,span->begin);
+                fputs(")\n",c->file);
+            }
         }
     }
     /* compilers locate a case label's conversion at the label */
@@ -622,13 +756,21 @@ int ce_sema_command(int argc, char **argv) {
     CeArena arena = {0}; CeGrammar g = {0}; CeError error = {{0},0};
     CeTokens tokens = {0}; CeForest forest = {.root=-1}; CeDFA dfa = {0}; CeLR lr = {0};
     CeText source = {NULL,0}; CeSema sema = {0}; bool sema_ready = false;
-    bool gnu = true, clang = false; int result = 1; const char *path = NULL;
+    bool gnu = true, clang = false, dialect_given = false, json_lines = false;
+    int result = 1; const char *path = NULL;
+    char *records = NULL; size_t records_len = 0; FILE *record_file = NULL;
     const CeAbi *abi = &ce_abi_x86_64_sysv;
+    CePPResult preprocessed = {0}; bool have_preprocessed = false;
+    int compiler_at = -1;
     for (int i = 2; i < argc; ++i) {
+        /* --cc COMPILER FLAGS... SOURCE: Cesta preprocesses the source as that
+           compiler would, and every position is reported where it was written. */
+        if (!strcmp(argv[i],"--cc")) { compiler_at = i; break; }
         if (!strcmp(argv[i],"--std=c11")) gnu = false;
+        else if (!strcmp(argv[i],"--json-lines")) json_lines = true;
         else if (!strcmp(argv[i],"--std=gnu11")) gnu = true;
-        else if (!strcmp(argv[i],"--dialect=clang")) clang = true;
-        else if (!strcmp(argv[i],"--dialect=gcc")) clang = false;
+        else if (!strcmp(argv[i],"--dialect=clang")) { clang = true; dialect_given = true; }
+        else if (!strcmp(argv[i],"--dialect=gcc")) { clang = false; dialect_given = true; }
         else if (!strncmp(argv[i],"--mutate=",9)) explicit_mutation = strtoul(argv[i]+9,NULL,10);
         else if (!strncmp(argv[i],"--abi=",6)) {
             if (!(abi = ce_abi_named(argv[i]+6))) { fprintf(stderr,"cesta %s: unknown ABI %s\n",argv[1],argv[i]+6); return 2; }
@@ -636,9 +778,27 @@ int ce_sema_command(int argc, char **argv) {
         else if (!path && argv[i][0] != '-') path = argv[i];
         else { fprintf(stderr,"cesta %s: unknown argument %s\n",argv[1],argv[i]); return 2; }
     }
-    if (!path) { fprintf(stderr,"usage: cesta %s [--std=c11|gnu11] [--dialect=gcc|clang] PREPROCESSED-C\n",argv[1]); return 2; }
+    if (json_lines && strcmp(argv[1],"bind") && strcmp(argv[1],"types") && strcmp(argv[1],"census")) {
+        fprintf(stderr,"cesta %s: --json-lines applies to bind, types and census\n",argv[1]); return 2;
+    }
+    if (compiler_at >= 0) {
+        for (int i = compiler_at+2; i < argc; ++i) {
+            if (!strncmp(argv[i],"-std=",5)) gnu = !(argv[i][5] == 'c' || !strncmp(argv[i]+5,"iso",3));
+            if (argv[i][0] != '-' && (i == compiler_at+1 || strcmp(argv[i-1],"-I")) ) path = argv[i];
+        }
+        if (!ce_pp_run(ce_builtin_CPPGNUGrammar(),argc-compiler_at,argv+compiler_at,false,&preprocessed,&error)) {
+            fprintf(stderr,"cesta %s: preprocessing: %s\n",argv[1],error.message);
+            ce_pp_result_free(&preprocessed); return 1;
+        }
+        have_preprocessed = true; located = &preprocessed;
+        if (!dialect_given) clang = preprocessed.clang;
+        path = "<preprocessed>";
+    }
+    if (!path) { fprintf(stderr,"usage: cesta %s [--std=c11|gnu11] [--dialect=gcc|clang] PREPROCESSED-C\n"
+                         "       cesta %s [--abi=ABI] --cc COMPILER COMPILER-FLAGS SOURCE\n",argv[1],argv[1]); return 2; }
     CeTree *tree;
-    if (!ce_builtin_dialect(&g,gnu,clang,&error) || !ce_read_file(&arena,path,&source,&error) ||
+    if (have_preprocessed) source = preprocessed.text;
+    if (!ce_builtin_dialect(&g,gnu,clang,&error) || (!have_preprocessed && !ce_read_file(&arena,path,&source,&error)) ||
         !ce_dfa_prepare(&g,&dfa,&error) || !ce_lr_prepare(&g,g.entries[0],&lr,&error) ||
         !ce_dfa_lex(&g,&dfa,source,&tokens,&error) || !ce_lr_parse(&g,&lr,&tokens,&forest,&error) ||
         !ce_tree_from_forest(&g,&forest,&tokens,&arena,&tree,&error)) goto done;
@@ -646,17 +806,28 @@ int ce_sema_command(int argc, char **argv) {
     sema.clang = clang; sema.abi = abi;
     sema_ready = true;
     if (!ce_bind(&sema,tree,&error)) goto done;
-    if (!strcmp(argv[1],"bind")) { if (!ce_sema_bindings_export(&sema,stdout)) goto done; }
+    if (json_lines) {
+        record_file = open_memstream(&records,&records_len);
+        if (!record_file) { ce_error(&error,0,"cannot open analysis record stream"); goto done; }
+    }
+    FILE *output = record_file ? record_file : stdout;
+    if (!strcmp(argv[1],"bind")) { if (!ce_sema_bindings_export(&sema,output)) goto done; }
     else {
         if (!sema_extents(&sema,tree,&tokens,&error) || !ce_elaborate(&sema,tree,&error)) goto done;
-        bool ok = !strcmp(argv[1],"types") ? types_export(&sema,tree,stdout) :
-            !strcmp(argv[1],"explicit") ? explicit_export(&sema,tree,stdout) :
-            !strcmp(argv[1],"census") ? census_export(&sema,tree,stdout) : probe_export(&sema,tree,stdout);
+        bool ok = !strcmp(argv[1],"types") ? types_export(&sema,tree,output) :
+            !strcmp(argv[1],"explicit") ? explicit_export(&sema,tree,output) :
+            !strcmp(argv[1],"census") ? census_export(&sema,tree,output) : probe_export(&sema,tree,output);
         if (!ok) goto done;
+    }
+    if (record_file) {
+        bool ok = fclose(record_file) == 0; record_file = NULL;
+        if (!ok || !json_records(&arena,(CeText){(unsigned char *)records,records_len},argv[1],&error)) goto done;
     }
     result = ferror(stdout) ? 1 : 0;
 done:
-    if (result && error.message[0]) {
+    if (record_file) fclose(record_file);
+    free(records);
+    if (result && error.message[0] && !(have_preprocessed && ce_pp_diagnostic(stderr,&preprocessed,&error))) {
         size_t line = 1, column = 1;
         for (size_t i = 0; i < error.offset && i < source.len; ++i) {
             if (source.data[i] == '\n') { ++line; column = 1; } else ++column;
@@ -664,6 +835,7 @@ done:
         fprintf(stderr,"%s:%zu:%zu: %s\n",path,line,column,error.message);
     }
     if (sema_ready) ce_sema_free(&sema);
+    if (have_preprocessed) { located = NULL; ce_pp_result_free(&preprocessed); }
     ce_lr_free(&lr); ce_dfa_free(&dfa); ce_forest_free(&forest); ce_tokens_free(&tokens);
     ce_grammar_free(&g); ce_arena_free(&arena);
     return result;

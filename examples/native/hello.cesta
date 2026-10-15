@@ -1,0 +1,12 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (include <stdio.h>)
+    (include "config.h")
+    (define (TWICE x) "((x) + (x))")
+    (comment "The native compiler expands the header and the macro.")
+    (fn int main ()
+      (cpp-ifdef QUIET
+        (then (return 0))
+        (else
+          (call printf "%s: %d\n" GREETING (call TWICE 4))
+          (return 0))))))

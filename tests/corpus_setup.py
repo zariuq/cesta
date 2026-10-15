@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from corpus import CETTA_CHECKOUT
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -19,7 +21,7 @@ def capture(arguments, cwd):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cetta", type=Path, default=ROOT.parent / "hyperon/CeTTa")
+    parser.add_argument("--cetta", type=Path, default=CETTA_CHECKOUT)
     parser.add_argument("--swi", type=Path, default=ROOT.parent / "repos/swipl-devel")
     args = parser.parse_args()
     output = ROOT / "build"
@@ -27,9 +29,15 @@ def main():
     cetta, swi = args.cetta.resolve(), args.swi.resolve()
     original = (cetta / "Makefile").read_text()
     dependency_line = "-include $(BUILD_CONFIG_STAMP) $(STAGE0_BUILD_CONFIG_STAMP) $(DEPS)"
-    if original.count(dependency_line) != 1:
+    lines = original.split("\n")
+    found = [i for i, line in enumerate(lines) if line.startswith(dependency_line)]
+    if len(found) != 1 or original.count(dependency_line) != 1:
         raise RuntimeError("CeTTa dependency-import layout changed; audit its read-only flag extraction")
-    source = original.replace(dependency_line, "")
+    # The import is one logical line; its continuation lines go with it.
+    end = found[0]
+    while lines[end].rstrip().endswith("\\"):
+        end += 1
+    source = "\n".join(lines[:found[0]]+lines[end+1:])
     flags = output / "cetta-build-flags.txt"
     source += "\n.PHONY: cesta-corpus-inputs\ncesta-corpus-inputs:\n"
     for index,name in enumerate(("CC","CPPFLAGS","CFLAGS","LDFLAGS","SRC","BUILD_OBJ_TAG","BUILD_CONFIG_HEADER")):

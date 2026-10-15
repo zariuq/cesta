@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import re
 
-from corpus import ROOT, pycparser_check, run
+from corpus import CETTA_CHECKOUT, ROOT, pycparser_check, run
 from oracle_triage import errors
 
 
@@ -24,12 +24,20 @@ WITNESSES = {
     "clang:GCC-va-arg-pack-len-builtin":(
         "int f(int x,...){return __builtin_va_arg_pack_len()+x;}",
         "int f(int x,...){return 1+x;}"),
+    "clang:GCC-atomic-pointer-builtin":(
+        "unsigned f(const _Atomic(unsigned)*p){unsigned r; __atomic_load(p,&r,2);return r;} "
+        "_Bool g(_Atomic(_Bool)*p){return __atomic_load_n(p,0);}",
+        "unsigned f(const unsigned*p){unsigned r; __atomic_load(p,&r,2);return r;} "
+        "_Bool g(_Bool*p){return __atomic_load_n(p,0);}"),
 }
 for spelling in ("_Float32","_Float64","_Float32x","_Float64x","_Float128"):
     WITNESSES["clang:GCC-floating-type:"+spelling] = (spelling+" x;","double x;")
 
 
 def clang_family(message):
+    if (re.fullmatch(r"address argument to atomic operation must be a pointer to a trivially-copyable type \(.+ invalid\)",message)
+        and "_Atomic(" in message):
+        return "clang:GCC-atomic-pointer-builtin"
     if message == "unknown attribute '__access__' ignored [-Werror,-Wunknown-attributes]":
         return "clang:GCC-access-attribute"
     if message == "'__malloc__' attribute ignored because Clang does not yet support this attribute signature [-Werror,-Wignored-attributes]":
@@ -68,6 +76,8 @@ def check_controls(output):
         "GNU-attribute":("int x __attribute__((unused));","int x;"),
         "GNU-predefined-type":("typedef __builtin_va_list V;","typedef int V;"),
         "GNU-restrict-spelling":("char *__restrict x;","char *restrict x;"),
+        "GNU-extension-prefix":("__extension__ typedef struct {long long q;} S;",
+                                "typedef struct {long long q;} S;"),
     }
     for family,pair in pyc_controls.items():
         results = [pycparser_check((source+"\n").encode()) for source in pair]
@@ -86,11 +96,12 @@ def pyc_disposition(record,corpus):
     diagnostic = pyc["diagnostic"]
     if diagnostic.endswith("before: __attribute__"):
         return "pycparser:GNU-attribute",None
-    if "Missing type in declaration" not in diagnostic and not diagnostic.endswith("before: __dest"):
+    if ("Missing type in declaration" not in diagnostic and not diagnostic.endswith("before: __dest")
+        and not diagnostic.endswith("Invalid function definition")):
         return None,{"reason":"unreviewed pycparser diagnostic","diagnostic":diagnostic}
     # Verify the actual first failing line, rather than infer a builtin from an
     # error message that could equally arise from a Cesta regression.
-    cwd = ROOT.parent / ("hyperon/CeTTa" if corpus == "cetta" else "repos/swipl-devel/build")
+    cwd = (CETTA_CHECKOUT if corpus == "cetta" else ROOT.parent / "repos/swipl-devel/build")
     source = Path(record["source"])
     before = (cwd / source).read_bytes()
     if hashlib.sha256(before).hexdigest() != record["source_sha256"]:
@@ -102,6 +113,8 @@ def pyc_disposition(record,corpus):
     if not match:
         return None,{"reason":"pycparser diagnostic lacks a source position"}
     line = data.decode().splitlines()[int(match[1])-1]
+    if diagnostic.endswith("Invalid function definition") and re.match(r"\s*__extension__\s+typedef\b",line):
+        return "pycparser:GNU-extension-prefix",{"line":int(match[1]),"text":line}
     if "Missing type in declaration" in diagnostic and "__builtin_va_list" in line:
         return "pycparser:GNU-predefined-type",{"line":int(match[1]),"text":line}
     if diagnostic.endswith("before: __dest") and "__restrict" in line:

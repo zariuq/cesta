@@ -78,6 +78,14 @@ CeText ce_name_key(CeArena *arena, CeText name) {
     return (CeText){key,at};
 }
 
+bool ce_name_equal(CeText first, CeText second) {
+    if (ce_equal(first,second)) return true;
+    CeArena scratch = {0};
+    bool equal = ce_equal(ce_name_key(&scratch,first),ce_name_key(&scratch,second));
+    ce_arena_free(&scratch);
+    return equal;
+}
+
 CeScope *ce_scope_new(const CeGrammar *g, const CeForest *forest) {
     CeScope *scope = calloc(1,sizeof(*scope));
     if (!scope) { fputs("cesta: out of memory\n",stderr); exit(2); }

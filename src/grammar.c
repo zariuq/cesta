@@ -371,7 +371,7 @@ static CeRegex quoted(CeGrammar *g, unsigned quote) {
     return regex_seq(g, regex_seq(g, regex_char(g, quote), body), regex_char(g, quote));
 }
 
-bool ce_grammar_finish(CeGrammar *g, CeError *error) {
+bool ce_grammar_finish_signature(CeGrammar *g, const CeGrammar *external, CeError *error) {
     if (!g->nsymbols) return ce_error(error,0,"empty grammar");
     for (size_t i = 0; i < g->nsymbols; ++i) {
         if (g->symbols[i].kind != CE_NONTERMINAL) continue;
@@ -460,6 +460,12 @@ bool ce_grammar_finish(CeGrammar *g, CeError *error) {
         if (g->symbols[i].kind != CE_NONTERMINAL) continue;
         bool found = false;
         for (size_t j = 0; j < g->nproductions; ++j) if (g->productions[j].lhs == (int)i) found = true;
+        /* An interpreted signature may refer to sorts supplied by its target.
+           This does not manufacture source productions for those sorts. */
+        if (external && !found)
+            for (size_t j = 0; j < external->nsymbols; ++j)
+                found |= external->symbols[j].kind != CE_LITERAL &&
+                         ce_equal(g->symbols[i].name,external->symbols[j].name);
         if (!found) return ce_error(error, 0, "undefined category %.*s", (int)g->symbols[i].name.len, g->symbols[i].name.data);
     }
     for (size_t i = 0; i < g->nlex; ++i) {
@@ -478,6 +484,10 @@ bool ce_grammar_finish(CeGrammar *g, CeError *error) {
         }
     } while (changed);
     return true;
+}
+
+bool ce_grammar_finish(CeGrammar *g, CeError *error) {
+    return ce_grammar_finish_signature(g,NULL,error);
 }
 
 static void closure(const CeGrammar *g, unsigned char *set, int start, int *stack) {
@@ -905,7 +915,9 @@ static bool profile_read_at(CeGrammar *g, CeText source, const char *directory,
         if (meta_is(&s,"conflict")) {
             CeConflictPolicy policy = {.next=-2};
             if (!next(&s)) return false;
-            policy.terminal = profile_terminal(g,&s);
+            /* A declared preference can cover every lookahead, while its two
+               production selectors must still match the conflict cell. */
+            policy.terminal = meta_is(&s,"any") ? -3 : profile_terminal(g,&s);
             if (policy.terminal == -2 || !next(&s) || !eat(&s,"prefer") || !profile_action(g,&s,&policy.preferred) ||
                 !eat(&s,"over") || !profile_action(g,&s,&policy.alternative)) return false;
             if (meta_is(&s,"when")) {
