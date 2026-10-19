@@ -252,11 +252,11 @@ static bool link_option(const char *a) {
 /* The native compiler supplies active header identifiers and macro
    replacement spelling. This is a finite name inventory for macro lowering,
    not a Cesta preprocessing or C semantic interpretation. */
-bool ce_native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
-                        const char *presentation, const char *identity,
-                        size_t n, char **args, const char *cache,
-                        CeNativeOutput *out, CeError *error) {
-    CeNativeEnvironment probe = {.unguarded=true};
+static bool native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
+                           const char *presentation, const char *identity,
+                           size_t n, char **args, const char *cache, CeLazyLexer *lexer, bool readable,
+                           FILE *plan, CeNativeOutput *out, CeError *error) {
+    CeNativeEnvironment probe = {.unguarded=true,.readable=readable,.lexer=lexer};
     if (!ce_native_text_at(g,arena,source,presentation,identity,&probe,out,error)) return false;
     if (!out->ndependencies) return true;
     uint64_t path_hash = text_hash(UINT64_C(14695981039346656037),
@@ -295,8 +295,27 @@ bool ce_native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
     CeText inventory;
     if (ce_execute_stdout(command,arena,&inventory,error))
         return ce_error(error,0,"native compiler could not admit the macro name environment");
-    CeNativeEnvironment environment = {.identifiers=inventory};
+    CeNativeEnvironment environment = {.identifiers=inventory,.readable=readable,.lexer=lexer,.plan=plan};
     return ce_native_text_at(g,arena,source,presentation,identity,&environment,out,error);
+}
+
+/* Both renderings print the same grammar, so they share one lexer. */
+bool ce_native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
+                        const char *presentation, const char *identity,
+                        size_t n, char **args, const char *cache,
+                        CeNativeOutput *out, CeError *error) {
+    CeLazyLexer lexer = {0};
+    bool ok = native_prepare(g,arena,source,presentation,identity,n,args,cache,&lexer,false,NULL,out,error);
+    ce_lazy_lexer_free(&lexer); return ok;
+}
+
+bool ce_native_export(const CeGrammar *g, CeArena *arena, CeText source,
+                      const char *presentation, const char *identity,
+                      size_t n, char **args, const char *cache, FILE *plan,
+                      CeNativeOutput *out, CeError *error) {
+    CeLazyLexer lexer = {0};
+    bool ok = native_prepare(g,arena,source,presentation,identity,n,args,cache,&lexer,true,plan,out,error);
+    ce_lazy_lexer_free(&lexer); return ok;
 }
 
 /* This bridge delegates preprocessing to the selected native compiler. Cesta

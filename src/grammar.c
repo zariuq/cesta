@@ -6,7 +6,7 @@
 void ce_grammar_free(CeGrammar *g) {
     ce_arena_free(&g->arena);
     free(g->symbols); free(g->productions); free(g->lex);
-    free(g->nfa); free(g->comments); free(g->entries); free(g->aliases); free(g->policies); free(g->hooks); free(g->deferred_specifiers); free(g->pairs); free(g->spellings); free(g->groupings); free(g->layout); free(g->initial_typedefs);
+    free(g->nfa); free(g->comments); free(g->entries); free(g->aliases); free(g->policies); free(g->hooks); free(g->deferred_specifiers); free(g->pairs); free(g->spellings); free(g->groupings); free(g->attachments); free(g->layout); free(g->initial_typedefs);
     memset(g, 0, sizeof(*g));
 }
 
@@ -774,6 +774,25 @@ static bool profile_read_at(CeGrammar *g, CeText source, const char *directory,
         }
         if (meta_is(&s,"layout")) {
             if (!next(&s)) return false;
+            if (meta_is(&s,"attach")) {
+                if (!next(&s)) return false;
+                int symbol = profile_terminal(g,&s);
+                if (symbol < 0 || g->symbols[symbol].kind != CE_LITERAL)
+                    return ce_error(error,s.token.offset,"layout attachment requires a grammar literal");
+                if (!next(&s) || !meta_is(&s,"in") || !next(&s))
+                    return ce_error(error,s.token.offset,"expected in and one or more reductions");
+                do {
+                    int production; if (!profile_rule(g,&s,&production)) return false;
+                    const CeProduction *p = &g->productions[production]; bool present = false;
+                    for (size_t i = 0; i < p->len; ++i) present |= p->rhs[i] == symbol;
+                    if (!present) return ce_error(error,s.token.offset,"attached literal is absent from the reduction");
+                    g->attachments = ce_resize(g->attachments,g->nattachments+1,sizeof(*g->attachments));
+                    g->attachments[g->nattachments].symbol = symbol;
+                    g->attachments[g->nattachments++].production = production;
+                } while (s.token.kind == CE_META_STRING);
+                if (!eat(&s,";")) return false;
+                continue;
+            }
             if (meta_is(&s,"protect")) {
                 int production, wrapper, parent = -1; size_t argument = SIZE_MAX;
                 if (!next(&s) || !profile_rule(g,&s,&production) || !eat(&s,"with") || !profile_rule(g,&s,&wrapper)) return false;
@@ -812,9 +831,11 @@ static bool profile_read_at(CeGrammar *g, CeText source, const char *directory,
                     !layout_token(g,&s,block ? CE_LAYOUT_BLOCK_CLOSE : CE_LAYOUT_GROUP_CLOSE) || !eat(&s,";")) return false;
                 continue;
             }
-            if (meta_is(&s,"line") || meta_is(&s,"join") || meta_is(&s,"tight") || meta_is(&s,"left") || meta_is(&s,"spaced")) {
+            if (meta_is(&s,"line") || meta_is(&s,"join") || meta_is(&s,"tight") || meta_is(&s,"left") || meta_is(&s,"spaced") ||
+                meta_is(&s,"prefix")) {
                 unsigned flags = meta_is(&s,"line") ? CE_LAYOUT_LINE : meta_is(&s,"join") ? CE_LAYOUT_JOIN :
-                    meta_is(&s,"tight") ? CE_LAYOUT_LEFT | CE_LAYOUT_RIGHT : meta_is(&s,"spaced") ? CE_LAYOUT_SPACED : CE_LAYOUT_LEFT;
+                    meta_is(&s,"tight") ? CE_LAYOUT_LEFT | CE_LAYOUT_RIGHT : meta_is(&s,"spaced") ? CE_LAYOUT_SPACED :
+                    meta_is(&s,"prefix") ? CE_LAYOUT_PREFIX : CE_LAYOUT_LEFT;
                 if (!next(&s) || s.token.kind != CE_META_STRING)
                     return ce_error(error,s.token.offset,"layout declaration needs one or more literals");
                 do { if (!layout_token(g,&s,flags)) return false; } while (s.token.kind == CE_META_STRING);

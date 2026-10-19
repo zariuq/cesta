@@ -15,7 +15,10 @@ layout line ";";
 layout join "else" "while";
 layout tight "(" "[" "." "->";
 layout left ")" "]" "," ";";
-layout spaced "return" "if" "while" "for" "switch" "sizeof" "_Alignof" "_Generic" "_Static_assert";
+layout spaced "return" "if" "while" "for" "switch";
+layout prefix "!" "~" "-" "+" "*" "&" "++" "--";
+layout attach ":" in "GenericType" "GenericAssociation" "GenericDefault" "GenericAssociation"
+    "Label" "LabeledStatement" "Case" "LabeledStatement" "Default" "LabeledStatement";
 layout spaced "+" "-" "*" "/" "%" "<<" ">>" "&" "^" "|" "&&" "||" "==" "!=" "<" ">" "<=" ">=" "=";
 layout spaced "+=" "-=" "*=" "/=" "%=" "<<=" ">>=" "&=" "^=" "|=" "?" ":";
 layout spaced ";" ",";

@@ -656,11 +656,14 @@ bool ce_view_compile(CeViewProfile *profile, const CeGrammar *ast, CeCatalog *ca
     profile->grammar = ast; profile->name = ce_cstr(&profile->arena,name); profile->version = version;
     CeGrammar surface = {.zero_width_literals = true}; FILE *stream = tmpfile(); bool ok = false;
     if (!stream) return ce_error(error,0,"cannot allocate surface-signature stream");
-    for (size_t i = 0; i < source->len; ++i) {
+    CeLazyLexer lexer = {0}; bool printed = true;
+    for (size_t i = 0; i < source->len && printed; ++i) {
         const CeTree *tree = source->definitions[i].tree;
-        if (!ce_tree_print(catalog->syntax,tree,tree->symbol,stream,error)) goto done;
+        printed = ce_tree_print_shared(catalog->syntax,&lexer,tree,tree->symbol,stream,error);
         fputs(";\n",stream);
     }
+    ce_lazy_lexer_free(&lexer);
+    if (!printed) goto done;
     long size = ftell(stream);
     if (size < 0) { ce_error(error,0,"cannot measure surface signature"); goto done; }
     CeText bytes = {ce_alloc(&profile->arena,(size_t)size+1),(size_t)size};

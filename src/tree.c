@@ -306,11 +306,12 @@ bool ce_tree_equal(const CeGrammar *g, const CeTree *a, const CeTree *b) {
 typedef struct {
     FILE *file;
     size_t block_depth, group_depth, *group_floors, floor_capacity;
-    bool line_start, pending_break, open_source;
+    bool line_start, pending_break, open_source, attach;
     unsigned previous;
     CeText previous_text;
     CeDFA lexer;
     const CeDFA *borrowed;
+    CeLazyLexer *shared;
     bool lexer_attempted, lexer_ready;
     int parent;
     size_t argument;
@@ -322,19 +323,38 @@ static void print_break(CePrinter *out) {
     out->previous_text = (CeText){NULL,0};
 }
 
+const CeDFA *ce_lazy_lexer(CeLazyLexer *lexer, const CeGrammar *g) {
+    if (lexer->grammar && lexer->grammar != g) return NULL;
+    if (!lexer->attempted) {
+        CeError ignored = {{0},0};
+        lexer->grammar = g; lexer->attempted = true;
+        lexer->ready = ce_dfa_prepare(g,&lexer->dfa,&ignored);
+    }
+    return lexer->ready ? &lexer->dfa : NULL;
+}
+
+void ce_lazy_lexer_free(CeLazyLexer *lexer) {
+    ce_dfa_free(&lexer->dfa); *lexer = (CeLazyLexer){0};
+}
+
 static bool adjacent_tokens(const CeGrammar *g, CePrinter *out, CeText text) {
     CeError error = {{0},0};
-    if (!out->borrowed && !out->lexer_attempted) {
-        out->lexer_attempted = true;
-        out->lexer_ready = ce_dfa_prepare(g,&out->lexer,&error);
+    const CeDFA *lexer = out->borrowed;
+    if (!lexer && out->shared) lexer = ce_lazy_lexer(out->shared,g);
+    if (!lexer) {
+        if (!out->lexer_attempted) {
+            out->lexer_attempted = true;
+            out->lexer_ready = ce_dfa_prepare(g,&out->lexer,&error);
+        }
+        if (!out->lexer_ready) return false;
+        lexer = &out->lexer;
     }
-    if (!out->borrowed && !out->lexer_ready) return false;
     size_t length = out->previous_text.len+text.len;
     unsigned char *bytes = ce_resize(NULL,length+1,1);
     memcpy(bytes,out->previous_text.data,out->previous_text.len);
     memcpy(bytes+out->previous_text.len,text.data,text.len);
     CeTokens tokens = {0};
-    bool same = ce_dfa_lex(g,out->borrowed ? out->borrowed : &out->lexer,(CeText){bytes,length},&tokens,&error) && tokens.len == 2 &&
+    bool same = ce_dfa_lex(g,lexer,(CeText){bytes,length},&tokens,&error) && tokens.len == 2 &&
         tokens.data[0].offset == 0 && tokens.data[0].text.len == out->previous_text.len &&
         tokens.data[1].offset == out->previous_text.len && tokens.data[1].text.len == text.len;
     ce_tokens_free(&tokens); free(bytes); return same;
@@ -357,8 +377,9 @@ static void print_token(const CeGrammar *g, CeText text, int symbol, bool line, 
         size_t width = g->indentation ? g->indentation : 2;
         for (size_t i = 0; i < out->block_depth*width; ++i) fputc(' ',out->file);
         out->line_start = false;
-    } else if ((flags & CE_LAYOUT_BLOCK_OPEN) ||
-        ((flags & CE_LAYOUT_GROUP_OPEN) && (out->previous & CE_LAYOUT_SPACED)) ||
+    } else if (out->attach && adjacent_tokens(g,out,text)) {
+    } else if (((flags & CE_LAYOUT_BLOCK_OPEN) && !(out->previous & CE_LAYOUT_GROUP_OPEN)) ||
+        ((flags & CE_LAYOUT_GROUP_OPEN) && (out->previous & CE_LAYOUT_SPACED) && !(out->previous & CE_LAYOUT_RIGHT)) ||
         (!(flags & CE_LAYOUT_LEFT) && !(out->previous & CE_LAYOUT_RIGHT)) ||
         !adjacent_tokens(g,out,text)) fputc(' ',out->file);
     fwrite(text.data,1,text.len,out->file); out->previous = flags; out->previous_text = text;
@@ -403,7 +424,16 @@ static bool render_rhs(const CeGrammar *g, const CeProduction *p, const CeTree *
         int symbol = p->rhs[i];
         if (g->symbols[symbol].erased) continue;
         if (g->symbols[symbol].kind == CE_LITERAL) {
+            for (size_t k = 0; k < g->nattachments && !out->attach; ++k)
+                out->attach = g->attachments[k].symbol == symbol && g->attachments[k].production == (int)(p-g->productions);
             print_terminal(g,symbol,out);
+            out->attach = false;
+            /* A prefix operator opening its production binds to its operand;
+               the lexer check still separates tokens that would merge. */
+            if (!child && i+1 < p->len && g->symbols[p->rhs[i+1]].kind != CE_LITERAL)
+                for (size_t k = 0; k < g->nlayout; ++k)
+                    if (g->layout[k].symbol == symbol && (g->layout[k].flags & CE_LAYOUT_PREFIX))
+                        out->previous |= CE_LAYOUT_RIGHT;
         } else {
             if (!transparent && g->symbols[p->lhs].list_element < 0) {
                 out->parent = (int)(p-g->productions); out->argument = child;
@@ -542,24 +572,39 @@ static bool render(const CeGrammar *g, const CeTree *t, int sort, CePrinter *out
     return render_body(g,t,sort,out,error,active,depth);
 }
 
-bool ce_tree_print_prepared(const CeGrammar *g, const CeDFA *lexer, const CeTree *tree,
-                            int sort, FILE *file, CeError *error) {
+/* A borrowed lexer must have been prepared for g. Without one, a shared or
+   private lexer is prepared on the first token-boundary question. */
+static bool print_with(const CeGrammar *g, const CeDFA *lexer, CeLazyLexer *shared,
+                       const CeTree *tree, int sort, bool open_source, FILE *file, CeError *error) {
     unsigned char *active = calloc(g->nsymbols,1);
     if (!active) { fputs("cesta: out of memory\n",stderr); exit(2); }
-    CePrinter out = {.file=file,.line_start=true,.parent=-1,.borrowed=lexer};
+    CePrinter out = {.file=file,.line_start=true,.parent=-1,.borrowed=lexer,.shared=shared,
+                     .open_source=open_source};
     bool ok = render(g,tree,sort,&out,error,active,0);
     free(out.group_floors); ce_dfa_free(&out.lexer); free(active); return ok;
+}
+
+bool ce_tree_print_prepared(const CeGrammar *g, const CeDFA *lexer, const CeTree *tree,
+                            int sort, FILE *file, CeError *error) {
+    return print_with(g,lexer,NULL,tree,sort,false,file,error);
 }
 
 bool ce_tree_print(const CeGrammar *g, const CeTree *tree, int sort, FILE *file, CeError *error) {
-    return ce_tree_print_prepared(g,NULL,tree,sort,file,error);
+    return print_with(g,NULL,NULL,tree,sort,false,file,error);
+}
+
+bool ce_tree_print_shared(const CeGrammar *g, CeLazyLexer *lexer, const CeTree *tree,
+                          int sort, FILE *file, CeError *error) {
+    return print_with(g,NULL,lexer,tree,sort,false,file,error);
+}
+
+bool ce_tree_print_open_shared(const CeGrammar *g, CeLazyLexer *lexer, const CeTree *tree,
+                               int sort, FILE *file, CeError *error) {
+    return print_with(g,NULL,lexer,tree,sort,true,file,error);
 }
 
 bool ce_tree_print_open(const CeGrammar *g, const CeTree *tree, int sort, FILE *file, CeError *error) {
-    unsigned char *active = ce_resize(NULL,g->nsymbols,1);
-    CePrinter out = {.file=file,.line_start=true,.parent=-1,.open_source=true};
-    bool ok = render(g,tree,sort,&out,error,active,0);
-    free(out.group_floors); ce_dfa_free(&out.lexer); free(active); return ok;
+    return print_with(g,NULL,NULL,tree,sort,true,file,error);
 }
 
 bool ce_token_value(CeArena *arena, CeText spelling, CeText *out, CeError *error) {

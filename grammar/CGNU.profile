@@ -29,3 +29,6 @@ conflict any prefer reduce "(:)" "[GNUAttribute]" over reduce "GNUAttributeQuali
 conflict any prefer reduce "(:)" "[GNUAttribute]" over reduce "(:[])" "[GNUAttribute]";
 conflict any prefer reduce "ScopeDeclarationOpen" "ScopeDeclarationOpen" over reduce "GNUAttributeSpecifiers" "DeclarationSpecifiers";
 conflict ";" prefer reduce "NoFullExpression" "OptionalFullExpression" over shift;
+layout attach ":" in "GNUCaseRange" "LabeledStatement" "GNUAttributedLabel" "LabeledStatement"
+    "GNULabelDeclaration" "LabeledStatement" "GNUAttributedLabelDeclaration" "LabeledStatement"
+    "GNUCaseDeclaration" "LabeledStatement";

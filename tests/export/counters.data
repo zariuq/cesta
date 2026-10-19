@@ -1,0 +1,11 @@
+(cesta-counters/1
+  (enum ProbeCounter)
+  (prefix PROBE_COUNTER_)
+  (count COUNT)
+  (names PROBE_COUNTER_NAMES)
+  (profile dense)
+  (rows
+    (0 LOOKUP "lookup")
+    (1 CLONE "clone")
+    (2 REGISTRY_RESOLVE_HIT "resolve-registry-hit")
+    (3 MATCH_INDEX_FREE_BYTES "match-index-free-bytes")))

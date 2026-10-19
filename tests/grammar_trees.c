@@ -148,6 +148,27 @@ static CeText print(const CeGrammar *g, const CeDFA *lexer, CeTree *tree, int en
     CeText text = contents(a,file); fclose(file); return text;
 }
 
+/* Every printing entry must emit the same bytes: a borrowed lexer, one lazily
+   shared across all trees, or a private lexer per call, for closed and open
+   trees. Private lexers are rebuilt per call, so they are sampled. */
+static CeLazyLexer shared;
+static size_t printer_comparisons;
+static void same_printing(const CeGrammar *g, const CeDFA *lexer, CeTree *tree, int entry,
+                          CeText expected, bool private_lexers, CeArena *a, CeError *error) {
+    for (int mode = 0; mode < 4; ++mode) {
+        if (mode >= 2 && !private_lexers) break;
+        FILE *file = tmpfile(); require(file != NULL,"open printer comparison stream");
+        bool ok = mode == 0 ? ce_tree_print_shared(g,&shared,tree,entry,file,error) :
+                  mode == 1 ? ce_tree_print_open_shared(g,&shared,tree,entry,file,error) :
+                  mode == 2 ? ce_tree_print(g,tree,entry,file,error) :
+                              ce_tree_print_open(g,tree,entry,file,error);
+        require(ok,error->message);
+        require(ce_equal(contents(a,file),expected),"printing entries emit identical bytes"); fclose(file);
+        ++printer_comparisons;
+    }
+    require(ce_lazy_lexer(&shared,g) != NULL && ce_lazy_lexer(&shared,g) != lexer,"one shared lexer per grammar");
+}
+
 static CeTree *parse(const CeGrammar *g, const CeDFA *dfa, const CeLR *lr,
                      CeText text, CeArena *a, CeError *error) {
     CeTokens tokens = {0}; CeForest forest = {.root=-1}; CeTree *tree;
@@ -166,6 +187,26 @@ int main(int argc, char **argv) {
     int entry = g.entries[0];
     require(ce_dfa_prepare(&g,&dfa,&error) && ce_lr_prepare(&g,entry,&lr,&error),error.message);
     require(lr.conflicts == 0,"no undeclared parser conflicts");
+    /* Token boundaries the printer must keep apart or may join. */
+    static const char *boundaries[] = {
+        "int f(int a,int b){return a- -b+ +a- --b-a--;}",
+        "int g(int *p,int q){return *p/ *p+q/ *&q;}",
+        "double h(void){return 1.e+5+.5+0x1p-3+1e-3f;}",
+        "int i(int a){a<<=1;a>>=1;a&=~a;return a&&a||!a?a:a;}",
+        "struct s{int v;};int j(struct s *p){return p->v+(*p).v+p[0].v;}",
+        "const char *k(void){return \"/*\" \"//\" \"a\\\"b\";}",
+        "int l(void){return 'x'+L'y'+u'z'+U'w'+0x1Fu+017+42ULL;}",
+        "const void *m(void){return u8\"x\" u\"y\";}",
+        "int n(int a){return a+++a;}",
+    };
+    for (size_t i = 0; i < sizeof(boundaries)/sizeof(*boundaries); ++i) {
+        CeArena a = {0};
+        CeTree *tree = parse(&g,&dfa,&lr,ce_cstr(&a,boundaries[i]),&a,&error);
+        CeText printed = print(&g,&dfa,tree,entry,&a,false,&error);
+        require(ce_tree_equal(&g,tree,parse(&g,&dfa,&lr,printed,&a,&error)),"token boundary case reparses");
+        same_printing(&g,&dfa,tree,entry,printed,true,&a,&error);
+        ce_arena_free(&a);
+    }
     CeTree *context = parse(&g,&dfa,&lr,ce_cstr(&setup,"unsigned f(unsigned x,unsigned y){return 0u;}"),&setup,&error);
     CeTree *full = find(&g,context,"SomeFullExpression");
     require(full && full->len == 1,"one generated expression in a bound parameter context");
@@ -205,11 +246,13 @@ int main(int argc, char **argv) {
         CeTree *reparsed = parse(&g,&dfa,&lr,printed,&a,&error);
         require(ce_tree_equal(&g,context,reparsed),"parse(print(tree)) = tree");
         require(ce_equal(printed,print(&g,&dfa,reparsed,entry,&a,false,&error)),"print(parse(source)) is idempotent");
+        same_printing(&g,&dfa,context,entry,printed,accepted % 500 == 0,&a,&error);
         record(expression);
         full->children[0] = saved; ce_arena_free(&a); ++accepted;
     }
     size_t productions = 0;
     for (size_t i = 0; i < g.nproductions; ++i) productions += used[i] != 0;
-    printf("grammar-generated bound trees: %zu; attempts: %zu; source productions visited: %zu; all three codec laws passed\n",accepted,attempts,productions);
+    printf("grammar-generated bound trees: %zu; attempts: %zu; source productions visited: %zu; all three codec laws passed; %zu printer-entry comparisons identical\n",accepted,attempts,productions,printer_comparisons);
+    ce_lazy_lexer_free(&shared);
     free(height); free(minimum); free(used); ce_lr_free(&lr); ce_dfa_free(&dfa); ce_grammar_free(&g); ce_arena_free(&setup); return 0;
 }

@@ -31,6 +31,22 @@ TYPE_MODULES = [
     "Mettapedia.Languages.C11.ArithmeticConversions",
     "Mettapedia.Languages.C11.TypeLanguage",
 ]
+# The readable export: its lowering, its semantics, the correspondence proof,
+# the evaluation-order discipline, completeness, the library laws and the
+# counter-table profile, in dependency order.
+EXPORT_MODULES = [
+    "Mettapedia.GSLT.LanguageDef.MacroTemplateNames",
+    "Mettapedia.GSLT.LanguageDef.MacroCheckedNarrowing",
+    "Mettapedia.GSLT.LanguageDef.MacroExportPlan",
+    "Mettapedia.GSLT.LanguageDef.MacroExportStateful",
+    "Mettapedia.GSLT.LanguageDef.MacroExportCorrect",
+    "Mettapedia.GSLT.LanguageDef.MacroExportTheorem",
+    "Mettapedia.GSLT.LanguageDef.MacroExportOrder",
+    "Mettapedia.GSLT.LanguageDef.MacroExportHeader",
+    "Mettapedia.GSLT.LanguageDef.MacroExportComplete",
+    "Mettapedia.GSLT.LanguageDef.MacroExportLibraries",
+    "Mettapedia.GSLT.LanguageDef.ExportCounterTables",
+]
 ALLOWED_AXIOMS = {"propext","Classical.choice","Quot.sound"}
 
 
@@ -55,10 +71,24 @@ def code_without_comments(text):
 
 
 def named_theorems(code):
-    namespace = re.search(r'^namespace ([^\s]+)',code,re.MULTILINE)
-    if not namespace:
+    """Each public theorem with the namespace in force where it is declared."""
+    if not re.search(r'^namespace ([^\s]+)',code,re.MULTILINE):
         raise RuntimeError("contract file lacks an explicit namespace")
-    return [namespace[1]+"."+name for name in re.findall(r'\btheorem\s+([A-Za-z0-9_.?]+)',code)]
+    scopes, names = [], []
+    for line in code.split("\n"):
+        opened = re.match(r'namespace\s+([^\s]+)',line)
+        if opened:
+            scopes.append(("namespace",opened[1])); continue
+        if re.match(r'(?:noncomputable\s+)?section\b',line) or re.match(r'mutual\b',line):
+            scopes.append(("scope",None)); continue
+        closed = re.match(r'end(?:\s+([^\s]+))?\s*$',line)
+        if closed and scopes:
+            scopes.pop(); continue
+        declared = re.match(r'\s*(?:@\[[^\]]*\]\s*)?(?:protected\s+)?theorem\s+([A-Za-z0-9_.?\']+)',line)
+        if declared:
+            space = ".".join(name for kind,name in scopes if kind == "namespace")
+            names.append(space+"."+declared[1] if space else declared[1])
+    return names
 
 
 def main():
@@ -76,7 +106,7 @@ def main():
         lean += ["-M",str(args.lean_memory_mb)]
     files,theorems,imports = [],[],[]
     started = time.monotonic()
-    groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES]
+    groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES, EXPORT_MODULES]
     for group in groups:
         for name in group:
             source = project / (name.replace(".","/")+".lean")
@@ -117,7 +147,7 @@ def main():
         raise RuntimeError("the named theorem audit did not account for every declaration")
     summary = {"modules":files,"named_theorems":len(theorems),"axioms":dependencies,
                "seconds":round(time.monotonic()-started,2),
-               "boundary":"These generic codec, module-algebra, projection, admission, checked-presentation and finite binder-naming proofs, and the C11 arithmetic and type-compatibility models, do not prove the native C parser, scope hook, binder, elaborator, byte wire format, native compact adapter, macro expander or C compiler semantics."}
+               "boundary":"These generic codec, module-algebra, projection, admission, checked-presentation and finite binder-naming proofs, and the C11 arithmetic and type-compatibility models, do not prove the native C parser, scope hook, binder, elaborator, byte wire format, native compact adapter or C compiler semantics. The readable-export proofs relate each admitted macro rule's source use to the block Cesta's lowering produces, in an interpreter for the admitted C fragment; that the interpreter matches GCC/Clang on that fragment, and Cesta's printing of the block as C text, are checked by tests, not proved."}
     (output / "summary.json").write_text(json.dumps(summary,indent=2)+"\n")
     print(f"Lean contracts: {len(files)} strict module checks; {len(theorems)} named theorem axiom audits; {summary['seconds']}s")
 

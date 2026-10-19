@@ -398,12 +398,13 @@ bool ce_presentation_signature(CeCatalog *c, const CePresentation *p,
                                const CeGrammar *external, CeGrammar *out, CeError *error) {
     FILE *file = tmpfile();
     if (!file) return ce_error(error,0,"cannot allocate grammar rendering stream");
-    bool ok = true;
+    bool ok = true; CeLazyLexer lexer = {0};
     for (size_t i = 0; i < p->len && ok; ++i) {
         CeTree *tree = p->definitions[i].tree;
-        ok = ce_tree_print(c->syntax,tree,tree->symbol,file,error);
+        ok = ce_tree_print_shared(c->syntax,&lexer,tree,tree->symbol,file,error);
         fputs(";\n",file);
     }
+    ce_lazy_lexer_free(&lexer);
     long size = ftell(file);
     if (size < 0) ok = ce_error(error,0,"cannot measure grammar rendering stream");
     if (ok) {

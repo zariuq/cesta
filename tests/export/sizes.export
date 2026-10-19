@@ -1,0 +1,13 @@
+(cesta-export/1
+  (header CT_SIZES_H)
+  (profile gnu11)
+  (include <stddef.h>)
+  (include <stdint.h>)
+  (include "pair.h")
+  (use "../../macros/Sizes.module" Checked)
+  (function ct_pair_bytes_u32 ArrayBytes (element Pair) (count uint32_t) (size size_t)
+    (doc "Store length * sizeof(Pair) in *out when size_t represents it; return 1, or 0 leaving *out unchanged."))
+  (function ct_pair_bytes_u64 ArrayBytes (element Pair) (count uint64_t) (size size_t)
+    (doc "Store length * sizeof(Pair) in *out when size_t represents it; return 1, or 0 leaving *out unchanged."))
+  (function ct_doubled_capacity_u32 DoubledCapacity (count uint32_t)
+    (doc "Store initial when capacity is 0, otherwise 2 * capacity, if it fits; return 1, or 0 leaving *out unchanged.")))

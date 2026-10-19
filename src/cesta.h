@@ -93,7 +93,8 @@ enum {
     CE_LAYOUT_BLOCK_OPEN = 1, CE_LAYOUT_BLOCK_CLOSE = 2,
     CE_LAYOUT_GROUP_OPEN = 4, CE_LAYOUT_GROUP_CLOSE = 8,
     CE_LAYOUT_LINE = 16, CE_LAYOUT_JOIN = 32,
-    CE_LAYOUT_LEFT = 64, CE_LAYOUT_RIGHT = 128, CE_LAYOUT_SPACED = 256
+    CE_LAYOUT_LEFT = 64, CE_LAYOUT_RIGHT = 128, CE_LAYOUT_SPACED = 256,
+    CE_LAYOUT_PREFIX = 512
 };
 typedef struct { int symbol; unsigned flags; } CeLayoutToken;
 typedef struct {
@@ -127,6 +128,9 @@ typedef struct {
     size_t nspellings;
     CeGrouping *groupings;
     size_t ngroupings;
+    /* Literals that attach to the preceding token within listed productions. */
+    struct { int symbol, production; } *attachments;
+    size_t nattachments;
     CeLayoutToken *layout;
     size_t nlayout, indentation;
     CeText *initial_typedefs;
@@ -237,6 +241,19 @@ bool ce_tree_print_prepared(const CeGrammar *grammar, const CeDFA *lexer,
                             const CeTree *tree, int sort, FILE *file, CeError *error);
 bool ce_tree_print_open(const CeGrammar *grammar, const CeTree *tree, int sort,
                         FILE *file, CeError *error);
+/* A lexer prepared on first use for one grammar and lent to several printers.
+   It refuses any other grammar; printers then prepare their own. */
+typedef struct {
+    const CeGrammar *grammar;
+    CeDFA dfa;
+    bool attempted, ready;
+} CeLazyLexer;
+const CeDFA *ce_lazy_lexer(CeLazyLexer *lexer, const CeGrammar *grammar);
+void ce_lazy_lexer_free(CeLazyLexer *lexer);
+bool ce_tree_print_shared(const CeGrammar *grammar, CeLazyLexer *lexer,
+                          const CeTree *tree, int sort, FILE *file, CeError *error);
+bool ce_tree_print_open_shared(const CeGrammar *grammar, CeLazyLexer *lexer,
+                               const CeTree *tree, int sort, FILE *file, CeError *error);
 bool ce_tree_equal(const CeGrammar *grammar, const CeTree *a, const CeTree *b);
 bool ce_tree_label(const CeGrammar *grammar, const CeTree *tree, const char *label);
 bool ce_metadata_export(const CeGrammar *grammar, FILE *file, CeError *error);

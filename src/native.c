@@ -63,6 +63,7 @@ typedef struct {
 typedef struct {
     const CeGrammar *grammar; CeMacros *macros;
     NativeImport *imports; size_t nimports;
+    CeLazyLexer *lexer;
 } Native;
 
 static bool accepts(void *context, const CeAtom *a, int sort) {
@@ -81,7 +82,7 @@ static bool branch(Native *native, const CeAtom *a, size_t begin, int sort, int 
     for (size_t i = begin; i < a->len; ++i) {
         CeTree *tree;
         if (!recurse(context,a->items[i],sort,parent,arena,&tree,error,depth+1) ||
-            !ce_tree_print_open(native->grammar,tree,sort,file,error)) return false;
+            !ce_tree_print_open_shared(native->grammar,native->lexer,tree,sort,file,error)) return false;
         fputc('\n',file);
     }
     return true;
@@ -222,7 +223,8 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
             return ce_error(error,atom->offset,"native document disagrees with the requested presentation");
     } else if (!presentation || strcmp(presentation,"native-c/1"))
         return ce_error(error,atom->offset,"native source forms require a native-c/1 document or presentation selection");
-    CeViewProfile profile = {0}; CeTree *tree; Native native = {.grammar=g};
+    CeViewProfile profile = {0}; CeTree *tree; CeLazyLexer own = {0};
+    Native native = {.grammar=g,.lexer=environment && environment->lexer ? environment->lexer : &own};
     if (head(atom,"unit")) native.imports = ce_alloc(arena,atom->len*sizeof(*native.imports));
     bool ok = true;
     if (head(atom,"unit")) for (size_t i = 1; i < atom->len && ok; ++i) {
@@ -243,6 +245,9 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
         }
         if (!native.macros) {
             native.macros = ce_macros_new(g,atom,error);
+            if (native.macros) ce_macros_share_lexer(native.macros,native.lexer);
+            if (native.macros && environment && environment->readable) ce_macros_readable(native.macros);
+            if (native.macros && environment && environment->plan) ce_macros_plan(native.macros,environment->plan);
             if (native.macros && environment)
                 ce_macros_environment(native.macros,environment->identifiers,environment->unguarded);
         }
@@ -262,7 +267,7 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
         char *buffer = NULL; size_t length = 0; FILE *file = open_memstream(&buffer,&length);
         if (!file) ok = ce_error(error,0,"cannot allocate native C output");
         else {
-            ok = ce_tree_print_open(g,tree,g->entries[0],file,error);
+            ok = ce_tree_print_open_shared(g,native.lexer,tree,g->entries[0],file,error);
             fputc('\n',file);
             if (ok) ok = finish(arena,file,&buffer,&length,&out->text,error);
             else { fclose(file); free(buffer); }
@@ -276,7 +281,7 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
             out->dependencies[i] = ce_text(arena,path.data,path.len);
         }
     }
-    ce_macros_free(native.macros); ce_view_free(&profile); return ok;
+    ce_macros_free(native.macros); ce_view_free(&profile); ce_lazy_lexer_free(&own); return ok;
 }
 bool ce_native_text(const CeGrammar *g, CeArena *arena, CeText source,
                      const char *presentation, CeText *out, CeError *error) {
@@ -286,7 +291,8 @@ bool ce_native_text(const CeGrammar *g, CeArena *arena, CeText source,
     return ok;
 }
 
-int ce_expand_command(int argc, char **argv) {
+static int expand_command(int argc, char **argv, bool readable) {
+    const char *plan_path = NULL; FILE *plan = NULL;
     const char *path = NULL, *output = NULL, *presentation = NULL; bool gnu = true;
     const char *compiler = getenv("CESTA_CC"), *cache = getenv("CESTA_BUILD_DIR");
     if (!compiler || !*compiler) compiler = "cc";
@@ -303,7 +309,10 @@ int ce_expand_command(int argc, char **argv) {
             if (++i == argc) { ce_error(&error,0,"--cc requires a compiler"); goto done; }
             compiler = argv[i]; continue;
         }
-        if (!strcmp(argv[i],"-o") || !strcmp(argv[i],"--presentation")) {
+        if (readable && !strcmp(argv[i],"--plan")) {
+            if (++i == argc) { ce_error(&error,0,"--plan requires a file"); goto done; }
+            plan_path = argv[i];
+        } else if (!strcmp(argv[i],"-o") || !strcmp(argv[i],"--presentation")) {
             bool is_output = !strcmp(argv[i],"-o");
             if (++i == argc) { ce_error(&error,0,"expand option requires a value"); goto done; }
             if (is_output) output = argv[i]; else presentation = argv[i];
@@ -315,7 +324,10 @@ int ce_expand_command(int argc, char **argv) {
     if (!path) { ce_error(&error,0,"expand requires an input file"); goto done; }
     flags[0] = (char *)compiler;
     if (!ce_read_file(&arena,path,&source,&error) || !ce_builtin_language(&grammar,gnu,&error) ||
-        !ce_native_prepare(&grammar,&arena,source,presentation,path,nflags,flags,cache,&expanded,&error)) goto done;
+        (plan_path && !(plan = fopen(plan_path,"wb")) && ce_error(&error,0,"cannot open %s",plan_path)) ||
+        !(readable ? ce_native_export(&grammar,&arena,source,presentation,path,nflags,flags,cache,plan,&expanded,&error)
+                   : ce_native_prepare(&grammar,&arena,source,presentation,path,nflags,flags,cache,&expanded,&error)))
+        goto done;
     text = expanded.text;
     FILE *file = output ? fopen(output,"wb") : stdout;
     if (!file) { ce_error(&error,0,"cannot open expanded C: %s",strerror(errno)); goto done; }
@@ -330,5 +342,9 @@ done:
             if (source.data[i] == '\n') { ++line; column = 1; } else ++column;
         fprintf(stderr,"%s:%zu:%zu: %s\n",path ? path : "cesta",line,column,error.message);
     }
+    if (plan && fclose(plan) && !result) { fprintf(stderr,"cannot write %s\n",plan_path); result = 1; }
     ce_grammar_free(&grammar); ce_arena_free(&arena); return result;
 }
+
+int ce_expand_command(int argc, char **argv) { return expand_command(argc,argv,false); }
+int ce_export_c_command(int argc, char **argv) { return expand_command(argc,argv,true); }

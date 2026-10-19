@@ -1,0 +1,65 @@
+Module MacroExportControls {
+  Theory EvaluationOrder() {
+    Empty Terms {
+      ConflictingUpdate . Expr ::= "(" "conflicting-update" Expr ")";
+      StableUpdate . Expr ::= "(" "stable-update" Expr ")";
+    }
+    Equations {
+      (ConflictingUpdate seed) == (Macro "cesta-macro/3"
+        (Profile "gnu11") (Ports)
+        (Arguments (Arg seed (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value") (Locals (Local cell "ordinary"))
+        (Template (block
+          (var int (LocalRef "ordinary" cell) (Argument seed))
+          ("+=" (LocalRef "ordinary" cell) ("++" (LocalRef "ordinary" cell)))
+          (LocalRef "ordinary" cell))));
+      (StableUpdate seed) == (Macro "cesta-macro/3"
+        (Profile "gnu11") (Ports)
+        (Arguments (Arg seed (CType int) "value" (Evaluation "once")))
+        (Result (CType int) "value") (Locals (Local cell "ordinary"))
+        (Template (block
+          (var int (LocalRef "ordinary" cell) (Argument seed))
+          ("+=" (LocalRef "ordinary" cell) 1)
+          (LocalRef "ordinary" cell))));
+    }
+  }
+  Theory Controls() {
+    Empty Terms {
+      Renamed . Expr ::= "(" "renamed-narrow" DeclarationSpecifiers DeclarationSpecifiers Expr Expr ")";
+      AsDeclared . Expr ::= "(" "as-declared" DeclarationSpecifiers DeclarationSpecifiers Expr ")";
+    }
+    Equations {
+      (Renamed wide narrow input slot) == (Macro "cesta-macro/3"
+        (Profile "gnu11")
+        (Ports (CompilerBuiltin convert "__builtin_add_overflow"))
+        (Arguments
+          (Arg wide (CType void) "syntax" (Evaluation "syntax"))
+          (Arg narrow (CType void) "syntax" (Evaluation "syntax"))
+          (Arg input (CType (TypeArgument wide)) "value" (Evaluation "once"))
+          (Arg slot (CType (TypeArgument narrow)) "addressable-modifiable" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals (Local held "ordinary") (Local ok "ordinary"))
+        (Template (block
+          (var (TypeArgument narrow) (LocalRef "ordinary" held))
+          (var int (LocalRef "ordinary" ok) 0)
+          ("if" ("!" (call (CompilerRef convert) (Argument input) 0
+                            ("&" (LocalRef "ordinary" held))))
+            (block
+              ("=" (Argument slot) (LocalRef "ordinary" held))
+              ("=" (LocalRef "ordinary" ok) 1)))
+          (LocalRef "ordinary" ok))));
+      (AsDeclared declared stored value) == (Macro "cesta-macro/3"
+        (Profile "gnu11")
+        (Ports)
+        (Arguments
+          (Arg declared (CType void) "syntax" (Evaluation "syntax"))
+          (Arg stored (CType void) "syntax" (Evaluation "syntax"))
+          (Arg value (CType (TypeArgument stored)) "value" (Evaluation "once")))
+        (Result (CType (TypeArgument declared)) "value")
+        (Locals (Local held "ordinary"))
+        (Template (block
+          (var (TypeArgument stored) (LocalRef "ordinary" held) (Argument value))
+          (LocalRef "ordinary" held))));
+    }
+  }
+}

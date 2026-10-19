@@ -1,0 +1,6 @@
+(cesta-export/1
+  (header CT_PROBES_H)
+  (profile gnu11)
+  (use "../../macros/Probes.module" Switched)
+  (macro ct_probe Probe
+    (doc "Run effect when the constant switch is nonzero; otherwise emit nothing, though the compiler still checks effect.")))

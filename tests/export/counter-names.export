@@ -1,0 +1,4 @@
+(cesta-export/1
+  (header PROBE_COUNTER_NAMES_H)
+  (include "counters.h")
+  (counter-names "counters.data"))

@@ -1,0 +1,7 @@
+(cesta-export/1
+  (header CT_NARROWING_H)
+  (profile gnu11)
+  (include <stdint.h>)
+  (use "../../macros/Narrowing.module" Checked)
+  (function ct_narrow_u64_u32 TryNarrow (source uint64_t) (target uint32_t)
+    (doc "Store value in *out when uint32_t represents it; return 1, or 0 leaving *out unchanged.")))

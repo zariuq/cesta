@@ -1,0 +1,7 @@
+(cesta-export/1
+  (header CT_WORKLISTS_H)
+  (profile gnu11)
+  (include <stddef.h>)
+  (use "../../macros/Worklists.module" Growable)
+  (function ct_worklist_push_int Push (element int) (count size_t)
+    (doc "Append value, growing the buffer through resize; return 1, or 0 leaving the worklist unchanged.")))

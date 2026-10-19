@@ -7,7 +7,14 @@ main :-
     emit_wire(Term),
     nl.
 
+% PeTTa's parser holds the whole document as codes and terms, about 170
+% bytes of stacks per input byte. Size the stacks to the document instead of
+% leaving Prolog's fixed default as a hidden limit; never lower a larger setting.
 read_wire(Parser, Input, Term) :-
+    size_file(Input, Bytes),
+    current_prolog_flag(stack_limit, Current),
+    Needed is 256 * Bytes,
+    (   Needed > Current -> set_prolog_flag(stack_limit, Needed) ; true ),
     consult(Parser),
     setup_call_cleanup(open(Input, read, Stream), read_string(Stream, _, Source), close(Stream)),
     once(sread(Source, Term)), !.

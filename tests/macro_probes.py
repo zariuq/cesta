@@ -35,6 +35,7 @@ COUNT = ('(fn size_t count_live (((const unsigned char) (* s)) (size_t n)) '
          '(block (var size_t live 0) (var uint64_t trimmed 0) '
          '(for (var size_t i 0) (< i n) (++ i) '
          '(if ([] s i) (++ live) (probe STATS (++ trimmed)))) '
+         '(probe STATS (+= trimmed 0)) '
          '(probe STATS (call sink 3 trimmed)) (return live)))')
 
 RUNTIME = r'''
@@ -55,6 +56,7 @@ HANDWRITTEN = PRELUDE + (
     'size_t count_live(const unsigned char *s, size_t n) {\n'
     '  size_t live = 0; uint64_t trimmed = 0;\n'
     '  for (size_t i = 0; i < n; ++i) if (s[i]) ++live; else PROBE(STATS, ++trimmed)\n'
+    '  PROBE(STATS, trimmed += 0)\n'
     '  PROBE(STATS, sink(3, trimmed))\n'
     '  return live;\n}\n')
 
