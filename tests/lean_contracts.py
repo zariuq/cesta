@@ -47,6 +47,22 @@ EXPORT_MODULES = [
     "Mettapedia.GSLT.LanguageDef.MacroExportLibraries",
     "Mettapedia.GSLT.LanguageDef.ExportCounterTables",
 ]
+# Layouts: the field algebra, the codes and their laws, the declarations Cesta
+# prints, field kinds, the C accessors and their meaning, and CeTTa's
+# frame-identity layout as data.
+LAYOUT_MODULES = [
+    "Mettapedia.GSLT.LanguageDef.LayoutAlgebra",
+    "Mettapedia.GSLT.LanguageDef.LayoutCodes",
+    "Mettapedia.GSLT.LanguageDef.LayoutDeclarations",
+    "Mettapedia.GSLT.LanguageDef.LayoutKinds",
+    "Mettapedia.GSLT.LanguageDef.LayoutLowering",
+    "Mettapedia.GSLT.LanguageDef.LayoutMigration",
+    "Mettapedia.GSLT.LanguageDef.LayoutBitVec",
+    "Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayoutCode",
+]
+LAYOUT_BRIDGE_MODULES = [
+    "Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayout",
+]
 ALLOWED_AXIOMS = {"propext","Classical.choice","Quot.sound"}
 
 
@@ -95,6 +111,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--lean-project",type=Path,default=ROOT.parent / "Mettapedia/lean/mettapedia")
     parser.add_argument("--lean-memory-mb",type=int)
+    parser.add_argument("--layout-bridge",action="store_true",
+                        help="also check the CeTTa runtime frame-codec correspondence and its axioms")
+    parser.add_argument("--layouts-only",action="store_true",
+                        help="check just the layout modules (and bridge when requested)")
     parser.add_argument("--output",type=Path,default=ROOT / "build/lean-contracts")
     args = parser.parse_args()
     project,output = args.lean_project.resolve(),args.output.resolve()
@@ -106,13 +126,17 @@ def main():
         lean += ["-M",str(args.lean_memory_mb)]
     files,theorems,imports = [],[],[]
     started = time.monotonic()
-    groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES, EXPORT_MODULES]
+    groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES, EXPORT_MODULES, LAYOUT_MODULES]
+    if args.layouts_only:
+        groups = [LAYOUT_MODULES]
+    if args.layout_bridge:
+        groups.append(LAYOUT_BRIDGE_MODULES)
     for group in groups:
         for name in group:
             source = project / (name.replace(".","/")+".lean")
             data = source.read_bytes()
             code = code_without_comments(data.decode())
-            if re.search(r'\b(?:sorry|axiom|native_decide|theorem_wanted)\b|_wanted',code):
+            if re.search(r'\b(?:sorry|axiom|native_decide|bv_decide|theorem_wanted)\b|_wanted',code):
                 raise RuntimeError("contract contains a proof gap or unchecked native decision: "+name)
             qualified = named_theorems(code)
             # Refresh exactly these supported module artifacts in dependency order.
@@ -146,8 +170,10 @@ def main():
     if set(theorems) != set(dependencies):
         raise RuntimeError("the named theorem audit did not account for every declaration")
     summary = {"modules":files,"named_theorems":len(theorems),"axioms":dependencies,
+               "layout_bridge_checked":args.layout_bridge,
+               "layouts_only":args.layouts_only,
                "seconds":round(time.monotonic()-started,2),
-               "boundary":"These generic codec, module-algebra, projection, admission, checked-presentation and finite binder-naming proofs, and the C11 arithmetic and type-compatibility models, do not prove the native C parser, scope hook, binder, elaborator, byte wire format, native compact adapter or C compiler semantics. The readable-export proofs relate each admitted macro rule's source use to the block Cesta's lowering produces, in an interpreter for the admitted C fragment; that the interpreter matches GCC/Clang on that fragment, and Cesta's printing of the block as C text, are checked by tests, not proved."}
+               "boundary":"These generic codec, module-algebra, projection, admission, checked-presentation and finite binder-naming proofs, and the C11 arithmetic and type-compatibility models, do not prove the native C parser, scope hook, binder, elaborator, byte wire format, native compact adapter or C compiler semantics. The readable-export proofs relate each admitted macro rule's source use to the block Cesta's lowering produces, in an interpreter for the admitted C fragment; that the interpreter matches GCC/Clang on that fragment, and Cesta's printing of the block as C text, are checked by tests, not proved. Layout proofs cover the word algebra and recorded unsigned-expression lowering. Kernel checks of location metadata establish declaration conditions, not execution under the C11 memory model. Layout printing, compilation and generated atomic operations remain tested boundaries."}
     (output / "summary.json").write_text(json.dumps(summary,indent=2)+"\n")
     print(f"Lean contracts: {len(files)} strict module checks; {len(theorems)} named theorem axiom audits; {summary['seconds']}s")
 

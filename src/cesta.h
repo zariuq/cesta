@@ -306,6 +306,10 @@ bool ce_presentation_grammar(CeCatalog *catalog, const CePresentation *presentat
                              CeGrammar *out, CeError *error);
 bool ce_presentation_signature(CeCatalog *catalog, const CePresentation *presentation,
                                const CeGrammar *external, CeGrammar *out, CeError *error);
+/* A module law's term as an atom: named and quoted constructors, strings,
+   integers and names; implicit substitution and freshness are refused. */
+CeAtom *ce_law_atom(const CeGrammar *syntax, CeLazyLexer *lexer, CeArena *arena,
+                    const CeTree *tree, CeError *error);
 
 enum { CE_VIEW_SLOT, CE_VIEW_NODE, CE_VIEW_LIST };
 typedef struct CeViewTemplate {

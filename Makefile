@@ -28,8 +28,8 @@ build/CPPGNU.cf: build/cesta-bootstrap grammar/CPreprocessing.module grammar/GNU
 build/language-data.c: build/embed build/C11.cf build/CGNU.cf build/CPPGNU.cf grammar/TheoryModule.cf grammar/C11.profile grammar/CGNU.profile grammar/CGNUC11.profile grammar/CClang.profile grammar/CClangC11.profile presentations/CompactC.module presentations/CompactC2.module presentations/CMeraStyle.module
 	./build/embed C11Grammar build/C11.cf CGNUGrammar build/CGNU.cf CPPGNUGrammar build/CPPGNU.cf TheoryModuleSyntax grammar/TheoryModule.cf C11Profile grammar/C11.profile CGNUProfile grammar/CGNU.profile CGNUC11Profile grammar/CGNUC11.profile CClangProfile grammar/CClang.profile CClangC11Profile grammar/CClangC11.profile CompactCModule presentations/CompactC.module CompactC2Module presentations/CompactC2.module CMeraStyleModule presentations/CMeraStyle.module > $@
 
-build/cesta: $(SOURCES) src/cesta.h src/sema.h src/pp.h src/native.h src/macro.h src/export.h src/driver.c src/view_driver.c src/native.c src/macro.c src/export.c src/sema.c src/source.c src/pp.c build/language-data.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/view_driver.c src/native.c src/macro.c src/export.c src/sema.c src/source.c src/pp.c build/language-data.c -o $@
+build/cesta: $(SOURCES) src/cesta.h src/sema.h src/pp.h src/native.h src/macro.h src/export.h src/layout.h src/driver.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/sema.c src/source.c src/pp.c build/language-data.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/sema.c src/source.c src/pp.c build/language-data.c -o $@
 
 build/test-foundation: tests/foundation.c $(LIBSOURCES) src/cesta.h
 	mkdir -p build
@@ -359,6 +359,28 @@ test-export-counters-cetta: build/cesta
 test-export-admission: build/cesta
 	python3 -B tests/export_admission.py $(EXPORT_ADMISSION_TEST_FLAGS)
 
+.PHONY: test-layouts test-layout-admission test-layout-cetta test-layout-edges test-layout-sanitizers test-layout-bridge test-layout-model
+test-layouts: build/cesta
+	python3 -B tests/layouts.py
+
+test-layout-edges: build/cesta
+	python3 -B tests/layout_edges.py
+
+test-layout-sanitizers: build/cesta
+	python3 -B tests/layout_edges.py --sanitize
+
+test-layout-model: build/cesta
+	python3 -B tests/lean_contracts.py --layouts-only $(LEAN_TEST_FLAGS)
+
+test-layout-bridge: test-layout-model
+	python3 -B tests/lean_contracts.py --layouts-only --layout-bridge $(LEAN_TEST_FLAGS)
+
+test-layout-admission: build/cesta test-layout-model
+	python3 -B tests/layout_admission.py $(LAYOUT_ADMISSION_TEST_FLAGS)
+
+test-layout-cetta: build/cesta
+	python3 -B tests/layout_cetta.py $(LAYOUT_CETTA_TEST_FLAGS)
+
 test-tiers:
 	python3 -B tests/test_tiers.py
 
@@ -370,7 +392,7 @@ test-tiers:
 CHECK_GATES := test-tiers test-foundation test-source-core test-pp-core test-qualification-controls \
 	test-reference test-wire test-literal-bytes test-coverage test-presentations test-presentation-coverage \
 	test-unicode-names test-source-driver test-driver test-macro-prescan test-macro-definition-ports \
-	test-macro-export test-macro-program-export test-export-counters
+	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges
 TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions \
 	test-native-authoring test-macro-engine test-macro-native-names test-macro-types test-macro-narrowing \
 	test-macro-worklists test-macro-sizes test-macro-probes test-provenance-core test-c-printer test-examples \
@@ -380,7 +402,8 @@ QUALIFY_GATES := $(TEST_GATES) test-corpora test-c11parser test-lean test-macro-
 	test-macro-port-admission test-metadata test-conflict-admission test-schema-extension-admission \
 	test-type-admission test-presentation-admission test-presentation-corpora test-semantic-corpora \
 	test-pp-corpora test-provenance-corpora test-mutants test-petta test-portable-readers test-workbench \
-	test-source test-export-counters-cetta test-export-admission
+	test-source test-export-counters-cetta test-export-admission test-layout-admission test-layout-cetta \
+	test-layout-sanitizers test-layout-bridge test-layout-model
 
 .PHONY: check test qualify
 check: $(CHECK_GATES)

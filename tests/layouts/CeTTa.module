@@ -1,0 +1,133 @@
+-- CeTTa's packed words, declared once. The constants are CeTTa's own; the
+-- tests compare them with its headers and its decoders.
+--
+-- Atoms declares the flags word as CeTTa writes it today: hash_valid is set
+-- after the atom is shared, in a word that is not atomic, so the declaration
+-- is refused. AtomsSplit declares the words a race-free CeTTa would need:
+-- hash_valid in a word of its own, written atomically, and its old bit spare.
+-- VarId's epoch is a frame identity, the reserved private tag, or zero; that
+-- inner structure needs nested layouts and is declared here as a plain field.
+Module CeTTa {
+  Theory Frames() {
+    Empty Equations {
+      (FrameIdentity) == (Layout "cesta-layout/1"
+        (Word 32)
+        (Constants
+          (Const ClassOneFirst (Pow2 20))
+          (Const ClassTwoFirst (Sum ClassOneFirst (Pow2 24)))
+          (Const ClassThreeFirst (Sum ClassTwoFirst (Pow2 26)))
+          (Const HandleLimit (Sum ClassThreeFirst (Pow2 26))))
+        (Fields (Field handle "value") (Field generation "value"))
+        (Case (Prefix 1 0)
+          (Place handle (Bits 0 20) (Range 1 (Minus ClassOneFirst 1)))
+          (Place generation (Bits 20 11) (Range 1 2046)))
+        (Case (Prefix 2 2)
+          (Place handle (Bits 0 24) (Offset ClassOneFirst))
+          (Place generation (Bits 24 6) (Range 1 62)))
+        (Case (Prefix 3 6)
+          (Place handle (Bits 0 26) (Offset ClassTwoFirst))
+          (Place generation (Bits 26 3) (Range 1 6)))
+        (Case (Prefix 4 14)
+          (Place handle (Bits 0 26) (Offset ClassThreeFirst))
+          (Place generation (Bits 26 2) (Range 1 2)))
+        (Reserved (Prefix 4 15)
+          (Place handle (Bits 0 28) (Offset HandleLimit))
+          (Place generation (Bits 28 0)))
+        (Location "immutable"));
+      (VarId) == (Layout "cesta-layout/1"
+        (Word 64)
+        (Fields (Field base "value") (Field epoch "value"))
+        (Case
+          (Place base (Bits 0 32))
+          (Place epoch (Bits 32 32)))
+        (Location "immutable"));
+    }
+  }
+  -- An example widening, not CeTTa's design: every frame identity as one
+  -- 64-bit word, its handle and generation in 32 bits each.
+  Theory FramesWide() {
+    Frames() Equations {
+      (FrameIdentityWide) == (Layout "cesta-layout/1"
+        (Word 64)
+        (Fields (Field handle "value") (Field generation "value"))
+        (Case
+          (Place handle (Bits 0 32) (Range 1 (Minus (Pow2 32) 1)))
+          (Place generation (Bits 32 32) (Range 1 (Minus (Pow2 32) 2))))
+        (Location "immutable")
+        (From FrameIdentity));
+    }
+  }
+  Theory Atoms() {
+    Empty Equations {
+      (AtomFlags) == (Layout "cesta-layout/1"
+        (Word 32)
+        (Fields
+          (Field has_vars "any-child")
+          (Field hash_valid "cache" (Written "after-publication"))
+          (Field has_registry_refs "any-child")
+          (Field hash_stable "all-children")
+          (Field hashcons_eligible "all-children")
+          (Field has_private_variant_var "any-child")
+          (Field arena_closed "fact")
+          (Field has_identity_grounded "any-child")
+          (Field has_thread_local_resource "any-child")
+          (Field var_bloom "any-child")
+          (Field he_evaluated "occurrence"))
+        (Case
+          (Place has_vars (Bits 0 1))
+          (Place hash_valid (Bits 1 1))
+          (Place has_registry_refs (Bits 2 1))
+          (Place hash_stable (Bits 3 1))
+          (Place hashcons_eligible (Bits 4 1))
+          (Place has_private_variant_var (Bits 5 1))
+          (Place arena_closed (Bits 6 1))
+          (Place has_identity_grounded (Bits 7 1))
+          (Place has_thread_local_resource (Bits 8 1))
+          (Place var_bloom (Bits 9 22))
+          (Place he_evaluated (Bits 31 1)))
+        (Alias term_stable hash_stable "split before either judgment is widened")
+        (Requires (AtMost var_bloom 24) "Bindings keeps the bloom in 24 bits")
+        (Location "construction"));
+    }
+  }
+  Theory AtomsSplit() {
+    Empty Equations {
+      (AtomFlags) == (Layout "cesta-layout/1"
+        (Word 32)
+        (Fields
+          (Field has_vars "any-child")
+          (Field spare "fact")
+          (Field has_registry_refs "any-child")
+          (Field hash_stable "all-children")
+          (Field hashcons_eligible "all-children")
+          (Field has_private_variant_var "any-child")
+          (Field arena_closed "fact")
+          (Field has_identity_grounded "any-child")
+          (Field has_thread_local_resource "any-child")
+          (Field var_bloom "any-child")
+          (Field he_evaluated "occurrence"))
+        (Case
+          (Place has_vars (Bits 0 1))
+          (Place spare (Bits 1 1) (Range 0 0))
+          (Place has_registry_refs (Bits 2 1))
+          (Place hash_stable (Bits 3 1))
+          (Place hashcons_eligible (Bits 4 1))
+          (Place has_private_variant_var (Bits 5 1))
+          (Place arena_closed (Bits 6 1))
+          (Place has_identity_grounded (Bits 7 1))
+          (Place has_thread_local_resource (Bits 8 1))
+          (Place var_bloom (Bits 9 22))
+          (Place he_evaluated (Bits 31 1)))
+        (Alias term_stable hash_stable "split before either judgment is widened")
+        (Requires (AtMost var_bloom 24) "Bindings keeps the bloom in 24 bits")
+        (Location "construction"));
+      (AtomHashValid) == (Layout "cesta-layout/1"
+        (Word 8)
+        (Fields (Field hash_valid "cache" (Written "after-publication")) (Field spare "fact"))
+        (Case
+          (Place hash_valid (Bits 0 1))
+          (Place spare (Bits 1 7) (Range 0 0)))
+        (Location "atomic"));
+    }
+  }
+}

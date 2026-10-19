@@ -1,0 +1,17 @@
+-- A word four threads write after it is shared, one byte each: declared
+-- atomic, so every access goes through the generated atomic accessors.
+Module Concurrent {
+  Theory Counters() {
+    Empty Equations {
+      (Lanes) == (Layout "cesta-layout/1"
+        (Word 32)
+        (Fields
+          (Field a "fact" (Written "after-publication"))
+          (Field b "fact" (Written "after-publication"))
+          (Field c "fact" (Written "after-publication"))
+          (Field d "fact" (Written "after-publication")))
+        (Case (Place a (Bits 0 8)) (Place b (Bits 8 8)) (Place c (Bits 16 8)) (Place d (Bits 24 8)))
+        (Location "atomic"));
+    }
+  }
+}

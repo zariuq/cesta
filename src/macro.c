@@ -107,54 +107,9 @@ static bool space(CeText name) {
     return ce_is(name,"ordinary") || ce_is(name,"tag") || ce_is(name,"member") || ce_is(name,"label");
 }
 
-/* The existing module parser owns syntax and composition. Quoted heads add
-   atom constructors such as "+" without embedding a second textual parser. */
+/* Module law data as atoms; the module parser owns the syntax. */
 static CeAtom *source_atom(CeMacros *m, const CeTree *t, CeError *error) {
-    const CeGrammar *g = &m->syntax; CeAtom *out;
-    if (ce_tree_label(g,t,"ASTVar")) {
-        FILE *file = tmpfile();
-        if (!file) { ce_error(error,t->offset,"cannot render module name"); return NULL; }
-        bool ok = ce_tree_print_shared(g,&m->syntax_lexer,t->children[0],t->children[0]->symbol,file,error);
-        long length = ftell(file); CeText text = {0};
-        if (ok && length >= 0) {
-            text = (CeText){ce_alloc(&m->arena,(size_t)length+1),(size_t)length};
-            rewind(file); ok = fread(text.data,1,text.len,file) == text.len;
-            /* Dotted paths print token separators; names are structural data. */
-            size_t n = 0;
-            for (size_t i = 0; i < text.len; ++i)
-                if (text.data[i] != ' ' && text.data[i] != '\n') text.data[n++] = text.data[i];
-            text.len = n; text.data[n] = 0;
-        } else ok = false;
-        fclose(file); if (!ok) { ce_error(error,t->offset,"cannot read module name"); return NULL; }
-        return symbol(&m->arena,text,t->offset);
-    }
-    if (ce_tree_label(g,t,"ASTText")) {
-        CeText text;
-        if (!ce_token_value(&m->arena,t->children[0]->spelling,&text,error)) return NULL;
-        out = ce_atom_new(&m->arena,CE_ATOM_TEXT,text,0);
-    } else if (ce_tree_label(g,t,"ASTInteger")) {
-        out = symbol(&m->arena,t->children[0]->spelling,t->offset);
-    } else if (ce_tree_label(g,t,"ASTSExp") || ce_tree_label(g,t,"ASTQuotedSExp")) {
-        const CeTree *children = t->children[1]; CeText head;
-        if (ce_tree_label(g,t,"ASTQuotedSExp")) {
-            if (!ce_token_value(&m->arena,t->children[0]->spelling,&head,error)) return NULL;
-        } else {
-            const CeTree *label = t->children[0];
-            if (label->len != 1 || label->children[0]->production != -1) {
-                ce_error(error,t->offset,"macro data needs a named atom constructor"); return NULL;
-            }
-            head = label->children[0]->spelling;
-        }
-        out = ce_atom_new(&m->arena,CE_ATOM_LIST,(CeText){0},children->len+1);
-        out->items[0] = symbol(&m->arena,head,t->offset);
-        for (size_t i = 0; i < children->len; ++i) {
-            out->items[i+1] = source_atom(m,children->children[i],error);
-            if (!out->items[i+1]) return NULL;
-        }
-    } else {
-        ce_error(error,t->offset,"macro data cannot contain implicit substitution or freshness syntax"); return NULL;
-    }
-    out->offset = t->offset; return out;
+    return ce_law_atom(&m->syntax,&m->syntax_lexer,&m->arena,t,error);
 }
 static bool field(const CeAtom *atom, const char *name, size_t count, CeError *error) {
     return (form(atom,name) && atom->len == count+1) ||
