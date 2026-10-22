@@ -2,8 +2,10 @@
 #include "export.h"
 #include "macro.h"
 #include "native.h"
+#include "table.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +72,13 @@ static void push_unique(CeText **names, size_t *len, CeText name) {
     for (size_t i = 0; i < *len; ++i) if (ce_equal((*names)[i],name)) return;
     *names = ce_resize(*names,*len+1,sizeof(**names)); (*names)[(*len)++] = name;
 }
+static bool reserve_declaration(CeText **names, size_t *len, CeText name, size_t offset, CeError *error) {
+    for (size_t i = 0; i < *len; ++i)
+        if (ce_equal((*names)[i],name))
+            return ce_error(error,offset,"duplicate C declaration %.*s",(int)name.len,name.data);
+    *names = ce_resize(*names,*len+1,sizeof(**names)); (*names)[(*len)++] = name;
+    return true;
+}
 
 static bool relative_path(CeArena *a, const char *spec, CeText name, const char **out) {
     char *path = ce_alloc(a,name.len+1); memcpy(path,name.data,name.len); path[name.len] = 0;
@@ -100,12 +109,22 @@ typedef struct { size_t id; CeText name, spelling; } TableRow;
 typedef struct {
     CeText type, prefix, count, names;
     TableRow *rows; size_t len;
+    const CeAtom *generic;
 } Table;
 
 static bool table_symbol(const CeAtom *a, const char *field, CeText *out, CeError *error) {
     if (!head(a,field) || a->len != 2 || a->items[1]->kind != CE_ATOM_SYMBOL)
         return ce_error(error,a->offset,"table field %s requires one symbol",field);
     *out = a->items[1]->text; return true;
+}
+static CeText c_prefixed(CeArena *arena, CeText prefix, CeText suffix) {
+    unsigned char *name = ce_alloc(arena,prefix.len+suffix.len+1);
+    if (prefix.len) memcpy(name,prefix.data,prefix.len);
+    if (suffix.len) memcpy(name+prefix.len,suffix.data,suffix.len);
+    return (CeText){name,prefix.len+suffix.len};
+}
+static bool c_prefixed_name(CeArena *arena, CeText prefix, CeText suffix) {
+    return ce_table_c_name(c_prefixed(arena,prefix,suffix));
 }
 static bool read_table(CeArena *arena, const char *spec, const CeAtom *item, Table *table, CeError *error) {
     const char *path; CeText source; CeAtom *data;
@@ -123,35 +142,51 @@ static bool read_table(CeArena *arena, const char *spec, const CeAtom *item, Tab
     if (!ce_is(profile,"dense")) return ce_error(error,data->items[5]->offset,"counter tables declare the dense profile");
     const CeAtom *rows = data->items[6];
     if (!head(rows,"rows") || rows->len < 2) return ce_error(error,rows->offset,"counter data requires nonempty (rows ...)");
-    if (!c_identifier(table->type) || !c_identifier(table->prefix) || !c_identifier(table->count) || !c_identifier(table->names))
+    if (!ce_table_c_name(table->type) || !c_identifier(table->prefix) || !c_identifier(table->count) ||
+        !c_prefixed_name(arena,table->prefix,table->count) || !ce_table_c_name(table->names))
         return ce_error(error,data->offset,"counter data names must be C identifiers");
     table->len = rows->len-1; table->rows = ce_alloc(arena,table->len*sizeof(*table->rows));
+    CeAtom *bundle = form(arena,"cesta-tables/1",1);
+    CeAtom *decl = form(arena,"Table",7);
+    bundle->items[1] = decl; decl->items[1] = sym(arena,"Counters");
+    CeAtom *columns = form(arena,"Columns",3);
+    const char *names[] = {"id","name","spelling"}, *types[] = {"Nat","Text","Text"};
+    for (size_t i = 0; i < 3; ++i) {
+        CeAtom *column = form(arena,"Column",2);
+        column->items[1] = sym(arena,names[i]); column->items[2] = sym(arena,types[i]);
+        columns->items[i+1] = column;
+    }
+    decl->items[2] = columns;
+    const char *keys[] = {"Key","Unique","Unique","Dense"};
+    const char *values[] = {"id","name","spelling","id"};
+    for (size_t i = 0; i < 4; ++i) {
+        CeAtom *key = form(arena,keys[i],1); key->items[1] = sym(arena,values[i]); decl->items[i+3] = key;
+    }
+    CeAtom *shared_rows = form(arena,"Rows",table->len); decl->items[7] = shared_rows;
     for (size_t i = 0; i < table->len; ++i) {
         const CeAtom *row = rows->items[i+1]; TableRow *r = &table->rows[i];
         if (row->kind != CE_ATOM_LIST || row->len != 3 || row->items[0]->kind != CE_ATOM_SYMBOL ||
             row->items[1]->kind != CE_ATOM_SYMBOL || row->items[2]->kind != CE_ATOM_TEXT)
             return ce_error(error,row->offset,"row requires (ID NAME \"spelling\")");
-        CeText id = row->items[0]->text; r->id = 0;
-        for (size_t k = 0; k < id.len; ++k) {
-            if (id.data[k] < '0' || id.data[k] > '9' || (k == 0 && id.data[k] == '0' && id.len > 1) || id.len > 9)
-                return ce_error(error,row->offset,"row ID must be a decimal natural number");
-            r->id = r->id*10+(size_t)(id.data[k]-'0');
-        }
-        if (!id.len) return ce_error(error,row->offset,"row ID must be a decimal natural number");
-        if (r->id != i) return ce_error(error,row->offset,"dense table expects ID %zu here, found %zu",i,r->id);
         r->name = row->items[1]->text; r->spelling = row->items[2]->text;
         if (!c_identifier(r->name)) return ce_error(error,row->offset,"row name must be a C identifier suffix");
+        if (!c_prefixed_name(arena,table->prefix,r->name))
+            return ce_error(error,row->offset,"row name must produce a C declaration identifier");
+        if (ce_equal(r->name,table->count)) return ce_error(error,row->offset,"row name collides with the count");
         for (size_t k = 0; k < r->spelling.len; ++k) {
             unsigned c = r->spelling.data[k];
             if (c < 32 || c > 126 || c == '"' || c == '\\')
                 return ce_error(error,row->offset,"row spelling must be printable ASCII without quotes or backslashes");
         }
-        if (ce_equal(r->name,table->count)) return ce_error(error,row->offset,"row name collides with the count");
-        for (size_t j = 0; j < i; ++j) {
-            if (ce_equal(table->rows[j].name,r->name)) return ce_error(error,row->offset,"duplicate row name");
-            if (ce_equal(table->rows[j].spelling,r->spelling)) return ce_error(error,row->offset,"duplicate row spelling");
-        }
+        CeAtom *shared = form(arena,"Row",3); shared->offset = row->offset;
+        for (size_t k = 0; k < 3; ++k) shared->items[k+1] = k == 1 ? txt(arena,row->items[k]->text) : row->items[k];
+        shared_rows->items[i+1] = shared;
     }
+    CeTables shared;
+    if (!ce_tables_read(arena,bundle,&shared,error)) return false;
+    table->generic = bundle;
+    for (size_t i = 0; i < table->len; ++i) table->rows[i].id = i;
+
     return true;
 }
 static CeAtom *table_enum(CeArena *arena, const Table *table) {
@@ -190,6 +225,158 @@ static CeAtom *table_names(CeArena *arena, const Table *table) {
     free(text); return block;
 }
 
+/* Generic projections share the checked table schema with counter and operation data. */
+static bool table_export(CeArena *arena, const char *spec, const CeAtom *item, FILE *plan,
+                         CeText **declared, size_t *ndeclared,
+                         CeText *exported, CeAtom **out, CeError *error) {
+    const char *path;
+    if (item->len < 4 || item->items[1]->kind != CE_ATOM_TEXT || item->items[2]->kind != CE_ATOM_SYMBOL ||
+        !relative_path(arena,spec,item->items[1]->text,&path))
+        return ce_error(error,item->offset,"table export requires FILE TABLE and named options");
+    CeTables bundle;
+    if (!ce_tables_load(arena,path,&bundle,error)) return false;
+    const CeTable *table = ce_tables_find(&bundle,item->items[2]->text);
+    if (!table) return ce_error(error,item->offset,"export names an unknown table");
+    CeText name = {0}, prefix = {0}, count = {0};
+    size_t id = SIZE_MAX, label = SIZE_MAX, ncolumns = table->ncolumns;
+    size_t *columns = ce_alloc(arena,(table->ncolumns+item->len+1)*sizeof(*columns));
+    for (size_t i = 0; i < ncolumns; ++i) columns[i] = i;
+    size_t *where = ce_alloc(arena,item->len*sizeof(*where));
+    const CeAtom **values = ce_alloc(arena,item->len*sizeof(*values)); size_t nwhere = 0;
+    bool is_enum = head(item,"table-enum"), is_names = head(item,"table-names");
+    bool seen[9] = {0};
+    const char *const options[] = {"enum","array","macro","prefix","count","id","name","text","columns","where"};
+    for (size_t i = 3; i < item->len; ++i) {
+        const CeAtom *a = item->items[i]; size_t option = 0;
+        while (option < 10 && !head(a,options[option])) ++option;
+        if (option == 10) return ce_error(error,a->offset,"unknown table export option");
+        if (option < 9 && seen[option]) return ce_error(error,a->offset,"table export repeats an option");
+        if (option < 9) seen[option] = true;
+        if (option <= 4) {
+            if (a->len != 2 || a->items[1]->kind != CE_ATOM_SYMBOL || !c_identifier(a->items[1]->text))
+                return ce_error(error,a->offset,"export name requires one C identifier");
+            if (option != 3 && !ce_table_c_name(a->items[1]->text))
+                return ce_error(error,a->offset,"export name requires a C declaration identifier");
+            if (option <= 2) {
+                if ((is_enum && option != 0) || (is_names && option != 1) || (!is_enum && !is_names && option != 2) || name.len)
+                    return ce_error(error,a->offset,"export name option does not match its projection");
+                name = a->items[1]->text;
+            } else if (option == 3) prefix = a->items[1]->text;
+            else count = a->items[1]->text;
+        } else if (option <= 7) {
+            if (a->len != 2 || a->items[1]->kind != CE_ATOM_SYMBOL)
+                return ce_error(error,a->offset,"column option requires one column name");
+            size_t column = ce_table_column(table,a->items[1]->text);
+            if (column == SIZE_MAX) return ce_error(error,a->offset,"export names an unknown column");
+            if (option == 5) id = column;
+            else {
+                if (label != SIZE_MAX) return ce_error(error,a->offset,"export repeats its label column");
+                label = column;
+            }
+        } else if (option == 8) {
+            ncolumns = a->len-1; columns = ce_alloc(arena,(ncolumns+1)*sizeof(*columns));
+            for (size_t j = 0; j < ncolumns; ++j) {
+                columns[j] = a->items[j+1]->kind == CE_ATOM_SYMBOL ? ce_table_column(table,a->items[j+1]->text) : SIZE_MAX;
+                if (columns[j] == SIZE_MAX) return ce_error(error,a->offset,"projection names an unknown column");
+            }
+        } else {
+            if (a->len != 3 || a->items[1]->kind != CE_ATOM_SYMBOL)
+                return ce_error(error,a->offset,"filter is (where COLUMN VALUE)");
+            where[nwhere] = ce_table_column(table,a->items[1]->text); values[nwhere] = a->items[2];
+            if (where[nwhere] == SIZE_MAX || a->items[2]->kind == CE_ATOM_LIST)
+                return ce_error(error,a->offset,"filter names an unknown column or nonscalar value");
+            if (!ce_table_cell_type(&bundle,&table->columns[where[nwhere]],values[nwhere],error)) return false;
+            ++nwhere;
+        }
+    }
+    if (!name.len) return ce_error(error,item->offset,"table export requires its C name");
+    if (!reserve_declaration(declared,ndeclared,name,item->offset,error)) return false;
+    if ((is_enum && (seen[1] || seen[2] || seen[7] || seen[8])) ||
+        (is_names && (seen[0] || seen[2] || seen[3] || seen[6] || seen[8])) ||
+        (!is_enum && !is_names && (seen[0] || seen[1] || seen[3] || seen[4] || seen[5] || seen[6] || seen[7])))
+        return ce_error(error,item->offset,"table export option does not apply to its projection");
+    CeTable selected = *table;
+    selected.rows = ce_alloc(arena,(table->nrows+1)*sizeof(*selected.rows)); selected.nrows = 0;
+    for (size_t r = 0; r < table->nrows; ++r) {
+        bool match = true;
+        for (size_t w = 0; w < nwhere; ++w) {
+            const CeAtom *cell = table->rows[r]->items[where[w]+1];
+            match &= cell->kind == values[w]->kind && ce_equal(cell->text,values[w]->text);
+        }
+        if (match) selected.rows[selected.nrows++] = table->rows[r];
+    }
+    char *buffer = NULL; size_t length = 0; FILE *file = open_memstream(&buffer,&length);
+    if (!file) return ce_error(error,item->offset,"cannot allocate table projection");
+    bool ok = true;
+    if (is_enum || is_names) {
+        if (is_enum && !selected.nrows && !count.len)
+            ok = ce_error(error,item->offset,"empty C enum projection requires a count enumerator");
+        if (id == SIZE_MAX || label == SIZE_MAX || table->columns[id].kind != CE_COLUMN_NAT)
+            ok = ce_error(error,item->offset,"enum/names export requires Nat id and label columns");
+        if (is_names && ok && (nwhere || table->dense != id || table->columns[label].kind != CE_COLUMN_TEXT || !count.len || !selected.nrows))
+            ok = ce_error(error,item->offset,"name array requires a nonempty unfiltered dense id, Text column and count name");
+        if (is_enum && ok) fprintf(file,"typedef enum {\n");
+        if (is_names && ok) fprintf(file,"static const char *const %.*s[%.*s] = {\n",(int)name.len,name.data,(int)count.len,count.data);
+        for (size_t r = 0; r < selected.nrows && ok; ++r) {
+            const CeAtom *num = selected.rows[r]->items[id+1], *text = selected.rows[r]->items[label+1];
+            uint64_t value = 0; (void)ce_table_nat(num,&value);
+            if (value > INT32_MAX) { ok = ce_error(error,num->offset,"C11 enum projection needs values representable by int; use row export for uint64 IDs"); break; }
+            if (is_enum) {
+                if (text->kind == CE_ATOM_LIST || !c_identifier(text->text) || !c_prefixed_name(arena,prefix,text->text)) {
+                    ok = ce_error(error,text->offset,"enum suffix requires a C identifier"); break;
+                }
+                for (size_t k = 0; k < r; ++k)
+                    if (ce_equal(selected.rows[k]->items[label+1]->text,text->text))
+                        ok = ce_error(error,text->offset,"enum projection repeats an enumerator");
+                if (!ok) break;
+                if (!reserve_declaration(declared,ndeclared,c_prefixed(arena,prefix,text->text),text->offset,error)) {
+                    ok = false; break;
+                }
+                if (count.len == prefix.len+text->text.len &&
+                    (!prefix.len || !memcmp(count.data,prefix.data,prefix.len)) &&
+                    !memcmp(count.data+prefix.len,text->text.data,text->text.len)) {
+                    ok = ce_error(error,text->offset,"enum row name collides with the count"); break;
+                }
+                fprintf(file,"    %.*s%.*s = %" PRIu64 ",\n",(int)prefix.len,prefix.data,(int)text->text.len,text->text.data,value);
+            } else {
+                fprintf(file,"    [%" PRIu64 "] = ",value); ce_table_c_cell(text,&table->columns[label],file); fputs(",\n",file);
+            }
+        }
+        if (ok && is_enum) {
+            if (count.len) {
+                if (selected.nrows > INT32_MAX) ok = ce_error(error,item->offset,"C11 count enumerator must fit int");
+                else ok = reserve_declaration(declared,ndeclared,count,item->offset,error);
+                if (ok) fprintf(file,"    %.*s = %zu\n",(int)count.len,count.data,selected.nrows);
+            }
+            fprintf(file,"} %.*s;\n",(int)name.len,name.data);
+        } else if (ok) fputs("};\n",file);
+    } else ok = ce_table_xmacro(&bundle,&selected,name,columns,ncolumns,file,error);
+    if (fclose(file)) ok = ce_error(error,item->offset,"cannot finish table projection");
+    if (ok) {
+        if (plan) {
+            ce_tables_write(&bundle,plan);
+            fprintf(plan,"(cesta-table-view/1 %.*s (Columns",(int)table->name.len,table->name.data);
+            for (size_t c = 0; c < ncolumns; ++c) {
+                CeText n = table->columns[columns[c]].name; fprintf(plan," %.*s",(int)n.len,n.data);
+            }
+            fputs(") (Where",plan);
+            for (size_t w = 0; w < nwhere; ++w) {
+                CeText n = table->columns[where[w]].name; fprintf(plan," (%.*s ",(int)n.len,n.data);
+                ce_atom_write(values[w],plan); fputc(')',plan);
+            }
+            fputs(") (Rows",plan);
+            for (size_t r = 0; r < selected.nrows; ++r) {
+                fputs(" (Row",plan);
+                for (size_t c = 0; c < ncolumns; ++c) { fputc(' ',plan); ce_atom_write(selected.rows[r]->items[columns[c]+1],plan); }
+                fputc(')',plan);
+            }
+            fputs("))\n",plan);
+        }
+        *exported = name; *out = form(arena,"native",1); (*out)->items[1] = txt(arena,ce_text(arena,buffer,length));
+    }
+    free(buffer); return ok;
+}
+
 bool ce_export_header(const CeGrammar *g, CeArena *arena, const char *spec, FILE *plan, CeText *out, CeError *error) {
     CeText source; CeAtom *manifest;
     if (!ce_read_file(arena,spec,&source,error) || !ce_atom_read(arena,source,&manifest,error)) return false;
@@ -198,7 +385,8 @@ bool ce_export_header(const CeGrammar *g, CeArena *arena, const char *spec, FILE
     const CeAtom *guard = NULL; bool gnu = true; Items includes = {0}, entries = {0};
     CeMacros *macros = ce_macros_new(g,NULL,error); size_t begin = 0;
     CeText *protect = NULL, *builtins = NULL, *exported = NULL;
-    size_t nprotect = 0, nbuiltins = 0, nexported = 0; bool ok = macros != NULL, theory = false;
+    CeText *declared = NULL; size_t ndeclared = 0;
+    size_t nprotect = 0, nbuiltins = 0, nexported = 0; bool ok = macros != NULL, theory = false, table_rows = false;
     for (size_t i = 1; i < manifest->len && ok; ++i) {
         const CeAtom *item = manifest->items[i];
         if (head(item,"header")) {
@@ -253,6 +441,7 @@ bool ce_export_header(const CeGrammar *g, CeArena *arena, const char *spec, FILE
             exported = ce_resize(exported,nexported+1,sizeof(*exported)); exported[nexported++] = name;
             for (size_t j = 0; j < result.nprotected; ++j) push_unique(&protect,&nprotect,result.protected_names[j]);
             for (size_t j = 0; j < result.nbuiltins; ++j) push_unique(&builtins,&nbuiltins,result.builtins[j]);
+            if (!reserve_declaration(&declared,&ndeclared,item->items[1]->text,item->offset,error)) { ok = false; break; }
             if (doc) {
                 for (size_t j = 1; j < doc->text.len; ++j)
                     if (doc->text.data[j-1] == '*' && doc->text.data[j] == '/') { ok = ce_error(error,doc->offset,"documentation contains */"); break; }
@@ -265,17 +454,36 @@ bool ce_export_header(const CeGrammar *g, CeArena *arena, const char *spec, FILE
             Table table = {0};
             if (!(ok = read_table(arena,spec,item,&table,error))) break;
             CeText name = head(item,"counters") ? table.type : table.names;
+            if (!reserve_declaration(&declared,&ndeclared,name,item->offset,error)) { ok = false; break; }
+            if (head(item,"counters")) {
+                for (size_t r = 0; r < table.len && ok; ++r)
+                    ok = reserve_declaration(&declared,&ndeclared,c_prefixed(arena,table.prefix,table.rows[r].name),item->offset,error);
+                if (ok) ok = reserve_declaration(&declared,&ndeclared,c_prefixed(arena,table.prefix,table.count),item->offset,error);
+                if (!ok) break;
+            }
             for (size_t j = 0; j < nexported; ++j)
                 if (ce_equal(exported[j],name)) { ok = ce_error(error,item->offset,"duplicate exported name"); break; }
             if (!ok) break;
             exported = ce_resize(exported,nexported+1,sizeof(*exported)); exported[nexported++] = name;
             CeAtom *block = head(item,"counters") ? table_enum(arena,&table) : table_names(arena,&table);
             if (!block) { ok = ce_error(error,item->offset,"cannot render counter table"); break; }
+            if (plan) { ce_atom_write(table.generic,plan); fputc('\n',plan); }
             CeAtom *spacer = form(arena,"native",1); spacer->items[1] = txt(arena,ce_cstr(arena,""));
             push(&entries,spacer); push(&entries,block);
+        } else if (head(item,"table-enum") || head(item,"table-names") || head(item,"table-rows")) {
+            CeText name = {0}; CeAtom *block = NULL;
+            if (!(ok = table_export(arena,spec,item,plan,&declared,&ndeclared,&name,&block,error))) break;
+            table_rows |= head(item,"table-rows");
+            for (size_t j = 0; j < nexported; ++j)
+                if (ce_equal(exported[j],name)) { ok = ce_error(error,item->offset,"duplicate exported name"); break; }
+            if (!ok) break;
+            exported = ce_resize(exported,nexported+1,sizeof(*exported)); exported[nexported++] = name;
+            push(&entries,block);
         } else ok = ce_error(error,item->offset,"unknown export specification field");
     }
     if (ok && !guard) ok = ce_error(error,manifest->offset,"export specification requires (header GUARD)");
+    for (size_t i = 0; ok && i < ndeclared; ++i)
+        if (ce_equal(guard->text,declared[i])) ok = ce_error(error,guard->offset,"include guard collides with a C declaration");
     if (ok && !nexported) ok = ce_error(error,manifest->offset,"export specification exports nothing");
     if (ok && !gnu && nbuiltins) ok = ce_error(error,manifest->offset,"compiler builtins require the gnu11 profile");
     if (ok) {
@@ -286,8 +494,10 @@ bool ce_export_header(const CeGrammar *g, CeArena *arena, const char *spec, FILE
         CeText name = guard ? guard->text : (CeText){0};
         if (ok) fprintf(text,"#ifndef %.*s\n#define %.*s 1\n",(int)name.len,name.data,(int)name.len,name.data);
         if (ok && includes.len) fputc('\n',text);
+        bool has_stdint = false;
         for (size_t i = 0; ok && i < includes.len; ++i) {
             const CeAtom *value = includes.items[i]->len == 2 ? includes.items[i]->items[1] : NULL;
+            has_stdint |= value && value->kind == CE_ATOM_SYMBOL && ce_is(value->text,"<stdint.h>");
             if (value && value->kind == CE_ATOM_TEXT && !memchr(value->text.data,'"',value->text.len) &&
                 !memchr(value->text.data,'\\',value->text.len) && !memchr(value->text.data,'\n',value->text.len))
                 fprintf(text,"#include \"%.*s\"\n",(int)value->text.len,value->text.data);
@@ -296,6 +506,7 @@ bool ce_export_header(const CeGrammar *g, CeArena *arena, const char *spec, FILE
                 fprintf(text,"#include %.*s\n",(int)value->text.len,value->text.data);
             else ok = ce_error(error,includes.items[i]->offset,"include requires <header> or \"header\"");
         }
+        if (ok && table_rows && !has_stdint) fputs("\n#include <stdint.h>\n",text);
         if (ok) {
             fputs("\n#if ",text);
             for (size_t i = 0; i < nexported; ++i)
@@ -358,7 +569,7 @@ bool ce_export_header(const CeGrammar *g, CeArena *arena, const char *spec, FILE
         }
         free(body.items);
     }
-    free(includes.items); free(entries.items); free(protect); free(builtins); free(exported);
+    free(includes.items); free(entries.items); free(protect); free(builtins); free(exported); free(declared);
     ce_macros_free(macros); return ok;
 }
 

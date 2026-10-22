@@ -1,0 +1,84 @@
+-- A small operation table: one vocabulary and operations of several shapes.
+Module ExampleOperations {
+  Theory Operations() {
+    Empty Equations {
+      (Vocabulary) == (Vocabulary "cesta-operation/1"
+        (Resources (Resource space "store") (Resource world "store") (Resource work "store")
+                   (Resource ledger "store") (Resource bindings "scratch"))
+        (Charges transition step)
+        (Profiles he_extended petta_extended prime));
+      (op_plus) == (Operation "cesta-operation/1"
+        (Spelling "+") (Symbol op_plus) (Dispatch "grounded")
+        (Forms (Form (Arg "value" "whnf" "borrow") (Arg "value" "whnf" "borrow")))
+        (Footprint (Reads) (Writes))
+        (Context (Blocks "no") (Branches "no") (Progress "single") (Charges))
+        (Result "fresh")
+        (Declared (Static "yes") (TypePure "yes") (Speculative "no") (Replay "refused"))
+        (Profiles he_extended petta_extended prime));
+      (println_bang) == (Operation "cesta-operation/1"
+        (Spelling "println!") (Symbol println_bang) (Dispatch "grounded")
+        (Forms (Form (Arg "value" "data" "borrow")))
+        (Footprint (Reads) (Writes world))
+        (Context (Blocks "yes") (Branches "no") (Progress "single") (Charges))
+        (Result "shared")
+        (Declared (Static "yes") (TypePure "no") (Speculative "no") (Replay "refused"))
+        (Profiles he_extended petta_extended prime));
+      (match) == (Operation "cesta-operation/1"
+        (Spelling "match") (Symbol match) (Dispatch "special")
+        (Forms (Form (Arg "value" "data" "borrow") (Arg "atom" "pattern" "borrow") (Arg "atom" "data" "borrow")))
+        (Footprint (Reads space bindings) (Writes))
+        (Context (Blocks "no") (Branches "yes") (Progress "steps") (Charges step))
+        (Result "fresh")
+        (Declared (Static "no") (TypePure "no") (Speculative "yes") (Replay "refused"))
+        (Profiles he_extended petta_extended prime));
+      (size) == (Operation "cesta-operation/1"
+        (Spelling "size") (Symbol size) (Dispatch "grounded")
+        (Forms (Form (Arg "value" "data" "borrow")))
+        (Footprint (Reads space) (Writes))
+        (Context (Blocks "no") (Branches "no") (Progress "single") (Charges))
+        (Result "fresh")
+        (Declared (Static "yes") (TypePure "no") (Speculative "yes") (Replay "refused"))
+        (Profiles he_extended petta_extended prime));
+      (space_push) == (Operation "cesta-operation/1"
+        (Spelling "space-push") (Symbol space_push) (Dispatch "special")
+        (Forms (Form (Arg "value" "data" "borrow") (Arg "value" "data" "consume")))
+        (Footprint (Reads) (Writes space))
+        (Context (Blocks "no") (Branches "no") (Progress "single") (Charges))
+        (Result "shared")
+        (Declared (Static "no") (TypePure "no") (Speculative "no") (Replay "refused"))
+        (Profiles he_extended petta_extended));
+      (work_take) == (Operation "cesta-operation/1"
+        (Spelling "work-take") (Symbol work_take) (Dispatch "special")
+        (Forms (Form (Arg "value" "data" "borrow") (Arg "value" "data" "borrow")))
+        (Footprint (Reads) (Writes work))
+        (Context (Blocks "no") (Branches "no") (Progress "bounded") (Charges transition))
+        (Result "fresh")
+        (Declared (Static "no") (TypePure "no") (Speculative "no") (Replay "refused"))
+        (Profiles he_extended petta_extended));
+      (quote) == (Operation "cesta-operation/1"
+        (Spelling "quote") (Symbol quote) (Dispatch "special")
+        (Forms (Form (Arg "atom" "data" "borrow")))
+        (Footprint (Reads) (Writes))
+        (Context (Blocks "no") (Branches "no") (Progress "single") (Charges))
+        (Result "borrowed")
+        (Declared (Static "no") (TypePure "no") (Speculative "yes") (Replay "refused" (Through 1)))
+        (Profiles he_extended petta_extended prime));
+      (history_record) == (Operation "cesta-operation/1"
+        (Spelling "history:record") (Symbol history_record) (Dispatch "special")
+        (Forms (Form (Arg "value" "data" "borrow") (Arg "value" "data" "borrow")))
+        (Footprint (Reads) (Writes ledger))
+        (Context (Blocks "no") (Branches "no") (Progress "bounded") (Charges step))
+        (Result "fresh")
+        (Declared (Static "no") (TypePure "no") (Speculative "no") (Replay "refused"))
+        (Profiles prime));
+      (py_call) == (Operation "cesta-operation/1"
+        (Spelling "py-call") (Symbol py_call) (Dispatch "grounded")
+        (Forms (Form (Arg "value" "data" "unknown")))
+        (Footprint "unknown")
+        (Context (Blocks "unknown") (Branches "unknown") (Progress "unknown") (Charges))
+        (Result "unknown")
+        (Declared (Static "yes") (TypePure "no") (Speculative "no") (Replay "refused"))
+        (Profiles he_extended petta_extended));
+    }
+  }
+}

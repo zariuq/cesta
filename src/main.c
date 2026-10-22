@@ -4,6 +4,9 @@
 #include "macro.h"
 #include "export.h"
 #include "layout.h"
+#include "operation.h"
+#include "table.h"
+#include "protocol.h"
 
 #include <string.h>
 
@@ -30,6 +33,9 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1],"export-header")) return ce_export_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"export-c")) return ce_export_c_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"layout")) return ce_layout_command(argc,argv);
+    if (argc > 1 && !strcmp(argv[1],"tables")) return ce_table_command(argc,argv);
+    if (argc > 1 && !strcmp(argv[1],"protocol")) return ce_protocol_command(argc,argv);
+    if (argc > 1 && !strcmp(argv[1],"operations")) return ce_operation_command(argc,argv);
     if (argc > 1 && (!strcmp(argv[1],"view") || !strcmp(argv[1],"convert") || !strcmp(argv[1],"export-view-rules")))
         return ce_view_command(argc,argv);
     if (argc > 1 && (!strcmp(argv[1],"bind") || !strcmp(argv[1],"types") || !strcmp(argv[1],"probe") ||
@@ -72,6 +78,9 @@ int main(int argc, char **argv) {
               "       cesta export-c [--cc COMPILER] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
               "       cesta layout check|functions MODULE THEORY\n"
               "       cesta layout header MODULE THEORY -o OUTPUT.h\n"
+              "       cesta tables check|rows|header BUNDLE [TABLE [COLUMN ...]] [-o HEADER]\n"
+              "       cesta operations check|rows|metta|tables|protocols MODULE THEORY\n"
+              "       cesta operations header MODULE THEORY -o OUTPUT.h\n"
               "       cesta view --as PRESENTATION [--from PRESENTATION] [--std=c11|gnu11] INPUT\n"
               "       cesta convert --to PRESENTATION [--from PRESENTATION] [--std=c11|gnu11] INPUT\n"
               "       cesta export-view-rules --as PRESENTATION [--std=c11|gnu11]\n"

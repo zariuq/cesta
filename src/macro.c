@@ -209,7 +209,7 @@ static bool template_check(MacroRule *r, const CeAtom *a, CeError *error) {
         return (i != SIZE_MAX && r->ports[i].intrinsic) ||
             ce_error(error,a->offset,"CompilerRef has no declared compiler builtin");
     }
-    if (form(a,"native") || form(a,"include") || form(a,"define") || form(a,"use-macros") ||
+    if (form(a,"native") || form(a,"include") || form(a,"define") || form(a,"use-macros") || form(a,"use-protocols") ||
         form(a,"cpp-if") || form(a,"cpp-ifdef") || form(a,"cpp-ifndef"))
         return ce_error(error,a->offset,"macro template cannot hide binding or evaluation in opaque source");
     if (a->kind == CE_ATOM_LIST)
@@ -471,7 +471,7 @@ bool ce_macros_load(CeMacros *m, const char *path, const char *theory, CeError *
             if (same(m->grammar,r.result,m->view.rules[j].result) &&
                 ce_equal(r.head,m->view.rules[j].head) && m->view.rules[j].shape == CE_VIEW_FORM)
                 ok = ce_error(error,p->offset,"macro head would change an existing compact form");
-        const char *reserved[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros"};
+        const char *reserved[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros","use-protocols"};
         for (size_t j = 0; j < sizeof(reserved)/sizeof(*reserved); ++j)
             if (ce_is(r.head,reserved[j])) ok = ce_error(error,p->offset,"macro head is a native source form");
         if (!ok) break;

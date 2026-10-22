@@ -58,7 +58,27 @@ LAYOUT_MODULES = [
     "Mettapedia.GSLT.LanguageDef.LayoutLowering",
     "Mettapedia.GSLT.LanguageDef.LayoutMigration",
     "Mettapedia.GSLT.LanguageDef.LayoutBitVec",
+    "Mettapedia.GSLT.LanguageDef.LayoutViews",
     "Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayoutCode",
+]
+OPERATION_MODULES = [
+    "Mettapedia.GSLT.LanguageDef.OperationContracts",
+    "Mettapedia.GSLT.LanguageDef.OperationCostProtocol",
+    "Mettapedia.GSLT.LanguageDef.OperationCostProtocolControls",
+]
+TABLE_MODULES = [
+    "Mettapedia.GSLT.LanguageDef.DeclaredTables",
+    "Mettapedia.GSLT.LanguageDef.DeclaredTablesControls",
+    "Mettapedia.GSLT.LanguageDef.DeclaredCounterTables",
+]
+PROTOCOL_MODULES = [
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocol",
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocolSafety",
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocolComposition",
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocolControls",
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocolInstrumentation",
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocolInstrumentationCorrectness",
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocolInstrumentationControls",
 ]
 LAYOUT_BRIDGE_MODULES = [
     "Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayout",
@@ -115,6 +135,12 @@ def main():
                         help="also check the CeTTa runtime frame-codec correspondence and its axioms")
     parser.add_argument("--layouts-only",action="store_true",
                         help="check just the layout modules (and bridge when requested)")
+    parser.add_argument("--operations-only",action="store_true",
+                        help="check just the operation-contract modules")
+    parser.add_argument("--tables-only",action="store_true",
+                        help="check just the shared declared-table models")
+    parser.add_argument("--protocols-only",action="store_true",
+                        help="check executable protocol lowering, safety and composition")
     parser.add_argument("--output",type=Path,default=ROOT / "build/lean-contracts")
     args = parser.parse_args()
     project,output = args.lean_project.resolve(),args.output.resolve()
@@ -126,9 +152,16 @@ def main():
         lean += ["-M",str(args.lean_memory_mb)]
     files,theorems,imports = [],[],[]
     started = time.monotonic()
-    groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES, EXPORT_MODULES, LAYOUT_MODULES]
+    groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES, EXPORT_MODULES, LAYOUT_MODULES,
+                                                                  OPERATION_MODULES, TABLE_MODULES, PROTOCOL_MODULES]
     if args.layouts_only:
         groups = [LAYOUT_MODULES]
+    if args.operations_only:
+        groups = [OPERATION_MODULES]
+    if args.tables_only:
+        groups = [TABLE_MODULES]
+    if args.protocols_only:
+        groups = [PROTOCOL_MODULES]
     if args.layout_bridge:
         groups.append(LAYOUT_BRIDGE_MODULES)
     for group in groups:

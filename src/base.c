@@ -1,8 +1,10 @@
+#define _XOPEN_SOURCE 700
 #include "cesta.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 struct CeBlock { struct CeBlock *next; max_align_t align; unsigned char data[]; };
 
@@ -56,6 +58,20 @@ bool ce_error(CeError *error, size_t offset, const char *fmt, ...) {
         error->offset = offset;
     }
     return false;
+}
+
+bool ce_same_file(const char *a, const char *b) {
+    if (!strcmp(a,b)) return true;
+    struct stat x, y;
+    if (!stat(a,&x) && !stat(b,&y) && x.st_dev == y.st_dev && x.st_ino == y.st_ino) return true;
+    /* Outputs may not exist yet. Resolve their containing directories too. */
+    const char *an = strrchr(a,'/'), *bn = strrchr(b,'/');
+    if (strcmp(an ? an+1 : a,bn ? bn+1 : b)) return false;
+    char *ad = an ? strndup(a,an == a ? 1 : (size_t)(an-a)) : strdup(".");
+    char *bd = bn ? strndup(b,bn == b ? 1 : (size_t)(bn-b)) : strdup(".");
+    char *ap = ad ? realpath(ad,NULL) : NULL, *bp = bd ? realpath(bd,NULL) : NULL;
+    bool same = ap && bp && !strcmp(ap,bp);
+    free(ad); free(bd); free(ap); free(bp); return same;
 }
 
 bool ce_read_file(CeArena *arena, const char *path, CeText *out, CeError *error) {

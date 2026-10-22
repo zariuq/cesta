@@ -45,7 +45,16 @@ LAWS = ["Mettapedia.GSLT.LanguageDef.LayoutCodes.Code.decode_encode",
         "Mettapedia.GSLT.LanguageDef.LayoutLowering.eval_apply",
         "Mettapedia.GSLT.LanguageDef.LayoutMigration.migration_of_admitted",
         "Mettapedia.GSLT.LanguageDef.LayoutMigration.migrate_injective",
-        "Mettapedia.GSLT.LanguageDef.LayoutBitVec.eval_toNat"]
+        "Mettapedia.GSLT.LanguageDef.LayoutBitVec.eval_toNat",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.views_of_admitted",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.eval_wordBound",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.wordBound_spec",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.encode_isSome_iff",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.eval_keyBound",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.eval_keyAdmits",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.keyBound_spec",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.eval_pack",
+        "Mettapedia.GSLT.LanguageDef.LayoutViews.pack_key"]
 # Declared layouts the Lean side already states independently.
 KNOWN = {"FrameIdentity": "Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayoutCode.frameIdentity"}
 
@@ -74,10 +83,11 @@ def main():
                for module, _ in LAYOUT_SOURCES}
     lines = ["import Mettapedia.GSLT.LanguageDef.LayoutMigration",
              "import Mettapedia.GSLT.LanguageDef.LayoutBitVec",
+             "import Mettapedia.GSLT.LanguageDef.LayoutViews",
              "import Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayoutCode",
              "open Mettapedia.GSLT.LanguageDef.MacroExportPlan Mettapedia.GSLT.LanguageDef.LayoutDeclarations",
              "open Mettapedia.GSLT.LanguageDef.LayoutKinds Mettapedia.GSLT.LanguageDef.LayoutLowering",
-             "open Mettapedia.GSLT.LanguageDef.LayoutMigration",
+             "open Mettapedia.GSLT.LanguageDef.LayoutMigration Mettapedia.GSLT.LanguageDef.LayoutViews",
              "set_option Elab.async false",
              "set_option maxRecDepth 4096",
              "namespace CestaLayoutAdmission"]
@@ -93,13 +103,16 @@ def main():
         records = parse(functions)
         recorded = [r for r in records if str(r[0]) == "cesta-layout-functions/1"]
         migrations = [r for r in records if str(r[0]) == "cesta-layout-migration/1"]
+        views = [r for r in records if str(r[0]) == "cesta-layout-views/1"]
         layouts = parse(printed)
-        if len(recorded) + len(migrations) != len(records):
+        if len(recorded) + len(migrations) + len(views) != len(records):
             raise RuntimeError(f"{theory}: unknown generated record")
         if not layouts or any(str(d[0]) != "cesta-layout/1" for d in layouts):
             raise RuntimeError(f"{theory}: expected nonempty normalized layout records")
         if [str(d[1]) for d in layouts] != [str(f[1]) for f in recorded]:
             raise RuntimeError(f"{theory}: layouts/accessor records differ in count, order or names")
+        if [str(d[1]) for d in layouts] != [str(v[1]) for v in views]:
+            raise RuntimeError(f"{theory}: layouts/view records differ in count, order or names")
         if len({str(d[1]) for d in layouts}) != len(layouts):
             raise RuntimeError(f"{theory}: duplicate layout record")
         expected_migrations = [(str(meta[1]), str(d[1])) for d in layouts for meta in d[5:]
@@ -107,14 +120,17 @@ def main():
         if expected_migrations != [(str(m[1]), str(m[2])) for m in migrations]:
             raise RuntimeError(f"{theory}: missing, extra or reordered migration records")
         first = len(report)
-        for data, accessors in zip(layouts, recorded):
+        for data, accessors, viewed in zip(layouts, recorded, views):
             name = str(data[1]); k = len(report)
             lines.append(f"def layout{k} : Atom := {atom(data)}")
             lines.append(f"theorem admitted{k} : admitted layout{k} = true := by decide")
             lines.append(f"def functions{k} : Atom := {atom(accessors)}")
             lines.append(f"theorem lowered{k} : functionsAdmitted layout{k} functions{k} = true := by decide")
+            lines.append(f"def views{k} : Atom := {atom(viewed)}")
+            lines.append(f"theorem viewed{k} : viewsAdmitted layout{k} views{k} = true := by decide")
             entry = {"module": str(module.relative_to(ROOT)), "theory": theory, "layout": name,
-                     "admitted": True, "accessors": len(accessors) - 2}
+                     "admitted": True, "accessors": len(accessors) - 2, "views": len(viewed) - 3,
+                     "constants": len(viewed[2]) - 1}
             fields = {str(f[0]): k for k, f in enumerate(data[3][1:])}
             if not any(str(x[0]) == "Node" for x in [data[4]]):
                 # A single-case word: its kinds are decided, so the derivation laws apply to it.
@@ -144,7 +160,8 @@ def main():
     # An accessor whose mask differs from the lowering by one bit is refused.
     accessors = (WORK / "Frames.functions").read_bytes()
     assert accessors.count(b"(lit 1048575)") >= 1
-    mutated, = [f for f in parse(accessors.replace(b"(lit 1048575)", b"(lit 1048574)", 1)) if str(f[1]) == "FrameIdentity"]
+    mutated, = [f for f in parse(accessors.replace(b"(lit 1048575)", b"(lit 1048574)", 1))
+                if str(f[0]) == "cesta-layout-functions/1" and str(f[1]) == "FrameIdentity"]
     lines.append(f"theorem maskRefused : functionsAdmitted layout0 ({atom(mutated)}) = false := by decide")
     # A migration whose old reading of a handle has a narrower mask is refused.
     line, = [x for x in (WORK / "FramesWide.functions").read_bytes().splitlines()
@@ -153,6 +170,28 @@ def main():
     new = next(j for j, e in enumerate(report) if e["layout"] == "FrameIdentityWide")
     old = next(j for j, e in enumerate(report) if e["layout"] == "FrameIdentity" and e["theory"] == "FramesWide")
     lines.append(f"theorem migrationRefused : migrationAdmitted layout{old} layout{new} ({atom(bad)}) = false := by decide")
+    # The views of the declared frame identities: an unchecked encoder whose
+    # first case comparison is one below the case's last handle, a constant
+    # one above its declared value, and a key whose ranges do not ascend are
+    # each refused.
+    frame_views = [x for x in accessors.splitlines() if x.startswith(b"(cesta-layout-views/1 FrameIdentity ")]
+    assert len(frame_views) == 1
+    pack = frame_views[0]
+    start = pack.index(b'(Function "FrameIdentity_pack"')
+    assert pack[start:].count(b"(le (var 0) (lit 1048575))") == 1
+    bad_pack, = parse(pack[:start] + pack[start:].replace(b"(le (var 0) (lit 1048575))", b"(le (var 0) (lit 1048574))"))
+    lines.append(f"theorem packRefused : viewsAdmitted layout0 ({atom(bad_pack)}) = false := by decide")
+    assert pack.count(b'("FrameIdentity_HandleLimit" 152043520)') == 1
+    bad_constant, = parse(pack.replace(b'("FrameIdentity_HandleLimit" 152043520)',
+                                       b'("FrameIdentity_HandleLimit" 152043521)'))
+    lines.append(f"theorem constantRefused : viewsAdmitted layout0 ({atom(bad_constant)}) = false := by decide")
+    frame_layout = [x for x in frames.splitlines() if x.startswith(b"(cesta-layout/1 FrameIdentity ")]
+    assert len(frame_layout) == 1 and frame_layout[0].count(b"(Key handle)") == 1
+    bad_key, = parse(frame_layout[0].replace(b"(Key handle)", b"(Key generation)"))
+    lines.append(f"theorem keyRefused : admitted ({atom(bad_key)}) = false := by decide")
+    assert frame_layout[0].count(b"(Const HandleLimit 152043520 ") == 1
+    bad_value, = parse(frame_layout[0].replace(b"(Const HandleLimit 152043520 ", b"(Const HandleLimit 152043521 "))
+    lines.append(f"theorem constantValueRefused : admitted ({atom(bad_value)}) = false := by decide")
     # Metadata has its own checks: a claimed write discipline, alias or bound
     # must be valid even when the word's field algebra is otherwise sound.
     flags = (WORK / "AtomsSplit.layouts").read_bytes()
@@ -201,8 +240,11 @@ def main():
     print(f"layout admission: {len(report)} declared layouts kernel-admitted, so the layout laws hold of each; "
           f"the declared frame identities are the layout the Lean side states for CeTTa; "
           f"{sum(e['accessors'] for e in report)} recorded unsigned accessors are exactly the proved lowering; "
+          f"{sum(e['views'] for e in report)} case and key views and {sum(e['constants'] for e in report)} "
+          "exported constants are exactly the proved views and the declared values; "
           f"{sum('migrates_from' in e for e in report)} version migration admitted; "
-          "overlap, wrong accessor/migration masks and five malformed metadata controls are refused; "
+          "overlap, wrong accessor/migration/pack/constant spellings, a descending key and five malformed "
+          "metadata controls are refused; "
           f"{len(decisions)} instance decisions axiom-audited")
 
 

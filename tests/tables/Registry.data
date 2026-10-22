@@ -1,0 +1,12 @@
+(cesta-tables/1
+  (Table Languages
+    (Columns (Column id Identifier) (Column label Text))
+    (Key id) (Unique label)
+    (Rows (Row he "HE") (Row petta "PeTTa")))
+  (Table Profiles
+    (Columns (Column id Nat) (Column code Identifier)
+             (Column language (Ref Languages id)) (Column label Text)
+             (Column enabled Bool) (Column effect (Enum pure reads writes unknown)))
+    (Key id) (Unique language label)
+    (Rows (Row 7 he he "he" true pure) (Row 19 extended petta "extended" false unknown)))
+)

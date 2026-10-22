@@ -23,6 +23,7 @@ typedef struct { CeText name, kind; bool after_publication; } Field;
 typedef struct { CeText name, field, condition; } Alias;
 typedef struct { CeText field, reason; uint64_t at_most; } Requirement;
 typedef struct { int child[2]; int leaf; } Node;
+typedef struct { CeText name; uint64_t value; const CeAtom *expr; } Constant;
 typedef struct {
     CeText name;
     uint64_t width;
@@ -33,8 +34,9 @@ typedef struct {
     CeText location;
     Node *trie; size_t ntrie;
     CeText from;    /* the earlier version its words migrate from */
+    int key;        /* the field whose ranges choose the case, or -1 */
+    Constant *constants; size_t nconstants;
 } Layout;
-typedef struct { CeText name; uint64_t value; } Constant;
 
 struct CeLayouts {
     CeArena arena;
@@ -68,7 +70,7 @@ static bool text_of(const CeAtom *a, CeText *out, CeError *error) {
     *out = a->text; return true;
 }
 /* Accessor names a field name would collide with. */
-static const char *const accessors[] = {"valid","admits","encode","derive_init","derive_child","derive_finish",
+static const char *const accessors[] = {"valid","admits","encode","pack","derive_init","derive_child","derive_finish",
                                         "value_copy","store","relocate"};
 static bool one_of(CeText t, const char *const *names, size_t n) {
     for (size_t i = 0; i < n; ++i) if (ce_is(t,names[i])) return true;
@@ -257,6 +259,8 @@ static bool read_case(CeLayouts *ls, Layout *l, const CeAtom *a, const Constant 
     return true;
 }
 
+static bool check_key(const Layout *l, size_t offset, CeError *error);
+
 /* A newer version must read the same fields and admit, case by case, every
    value the earlier version admits, so every old word has a new word. */
 static bool check_migration(CeLayouts *ls, const Layout *l, size_t offset, CeError *error) {
@@ -288,8 +292,9 @@ static bool check_migration(CeLayouts *ls, const Layout *l, size_t offset, CeErr
 static bool read_layout(CeLayouts *ls, CeText name, const CeAtom *a, CeError *error) {
     if (!form(a,"Layout") || a->len < 2 || a->items[1]->kind != CE_ATOM_TEXT || !ce_is(a->items[1]->text,"cesta-layout/1"))
         return ce_error(error,a->offset,"layout equation requires (Layout \"cesta-layout/1\" ...)");
-    Layout l = {.name = ce_text(&ls->arena,name.data,name.len)};
+    Layout l = {.name = ce_text(&ls->arena,name.data,name.len), .key = -1};
     Constant *k = NULL; size_t nk = 0; bool word = false, fields = false; bool ok = true;
+    CeText key = {0}; size_t key_offset = 0;
     for (size_t i = 2; i < a->len && ok; ++i) {
         const CeAtom *x = a->items[i];
         if (form(x,"Word") && x->len == 2) {
@@ -299,11 +304,12 @@ static bool read_layout(CeLayouts *ls, CeText name, const CeAtom *a, CeError *er
             word = true;
         } else if (form(x,"Constants")) {
             for (size_t j = 1; j < x->len && ok; ++j) {
-                const CeAtom *c = x->items[j]; Constant v;
+                const CeAtom *c = x->items[j]; Constant v = {0};
                 if (!form(c,"Const") || c->len != 3 || !name_of(c->items[1],&v.name,error)) {
                     ok = error->message[0] ? false : ce_error(error,c->offset,"layout constant requires (Const NAME E)"); break;
                 }
                 for (size_t m = 0; m < nk; ++m) if (ce_equal(k[m].name,v.name)) ok = ce_error(error,c->offset,"layout constant declared twice");
+                v.expr = c->items[2];
                 if (ok && (ok = evaluate(c->items[2],k,nk,&v.value,error))) { k = ce_resize(k,nk+1,sizeof(*k)); k[nk++] = v; }
             }
         } else if (form(x,"Fields")) {
@@ -356,9 +362,13 @@ static bool read_layout(CeLayouts *ls, CeText name, const CeAtom *a, CeError *er
         } else if (form(x,"From") && x->len == 2) {
             ok = !l.from.len && name_of(x->items[1],&l.from,error);
             if (!ok && !error->message[0]) ok = ce_error(error,x->offset,"layout declares two earlier versions");
+        } else if (form(x,"Key") && x->len == 2) {
+            ok = !key.len && name_of(x->items[1],&key,error);
+            if (!ok && !error->message[0]) ok = ce_error(error,x->offset,"layout declares two keys");
+            key_offset = x->offset;
         } else ok = ce_error(error,x->offset,"unknown layout section");
     }
-    free(k);
+    l.constants = k; l.nconstants = nk;
     if (ok && !l.ncases) ok = ce_error(error,a->offset,"layout declares no case");
     if (ok && !l.location.len) ok = ce_error(error,a->offset,"layout requires a (Location DISCIPLINE)");
     for (size_t i = 0; i < l.ncases && ok; ++i) ok = insert(&l,i,error);
@@ -370,6 +380,11 @@ static bool read_layout(CeLayouts *ls, CeText name, const CeAtom *a, CeError *er
             else if (!ranges_apart(&l.cases[i],&l.cases[j],l.nfields))
                 ok = ce_error(error,l.cases[j].offset,"this case and an earlier one read some words as the same value");
         }
+    if (ok && key.len) {
+        size_t j = field_index(&l,key);
+        if (j == SIZE_MAX) ok = ce_error(error,key_offset,"key names an undeclared field");
+        else { l.key = (int)j; ok = check_key(&l,key_offset,error); }
+    }
     for (size_t i = 0; i < l.nrequires && ok; ++i) {
         size_t f = field_index(&l,l.requires[i].field);
         for (size_t c = 0; c < l.ncases && ok; ++c)
@@ -393,7 +408,10 @@ static bool read_layout(CeLayouts *ls, CeText name, const CeAtom *a, CeError *er
     for (size_t i = 0; i < ls->len && ok; ++i)
         if (ce_equal(ls->items[i].name,l.name)) ok = ce_error(error,a->offset,"layout declared twice");
     if (ok && l.from.len) ok = check_migration(ls,&l,a->offset,error);
-    if (!ok) { free(l.fields); free(l.cases); free(l.aliases); free(l.requires); free(l.trie); return false; }
+    if (!ok) {
+        free(l.fields); free(l.cases); free(l.aliases); free(l.requires); free(l.trie); free(l.constants);
+        return false;
+    }
     ls->items = ce_resize(ls->items,ls->len+1,sizeof(*ls->items)); ls->items[ls->len++] = l;
     return true;
 }
@@ -412,7 +430,7 @@ void ce_layouts_free(CeLayouts *ls) {
     if (!ls) return;
     for (size_t i = 0; i < ls->len; ++i) {
         Layout *l = &ls->items[i];
-        free(l->fields); free(l->cases); free(l->aliases); free(l->requires); free(l->trie);
+        free(l->fields); free(l->cases); free(l->aliases); free(l->requires); free(l->trie); free(l->constants);
     }
     free(ls->items); ce_catalog_free(&ls->catalog); ce_grammar_free(&ls->syntax);
     ce_lazy_lexer_free(&ls->lexer); ce_arena_free(&ls->arena); free(ls);
@@ -476,6 +494,16 @@ void ce_layout_write(const CeLayouts *ls, size_t index, FILE *file) {
     }
     fputc(')',file);
     if (l->from.len) fprintf(file," (From %.*s)",(int)l->from.len,l->from.data);
+    if (l->key >= 0) fprintf(file," (Key %.*s)",(int)l->fields[l->key].name.len,l->fields[l->key].name.data);
+    if (l->nconstants) {
+        fputs(" (Constants",file);
+        for (size_t i = 0; i < l->nconstants; ++i) {
+            fprintf(file," (Const %.*s %llu ",(int)l->constants[i].name.len,l->constants[i].name.data,
+                    (unsigned long long)l->constants[i].value);
+            ce_atom_write(l->constants[i].expr,file); fputc(')',file);
+        }
+        fputc(')',file);
+    }
     fputs(")\n",file);
 }
 
@@ -560,6 +588,22 @@ static void leaves(const Layout *l, int at, uint64_t prefix, uint64_t depth, Lea
     leaves(l,node->child[0],prefix << 1,depth+1,out,n);
     leaves(l,node->child[1],prefix << 1 | 1,depth+1,out,n);
 }
+/* Field `key` chooses the case: its ranges ascend through the admitting
+   cases in prefix order, so one comparison per case finds a value's case. */
+static bool check_key(const Layout *l, size_t offset, CeError *error) {
+    size_t n = 0; bool ok = true;
+    Leaf *found = malloc((l->ncases+1)*sizeof(*found));
+    if (!found) return ce_error(error,offset,"cannot allocate layout cases");
+    leaves(l,0,0,0,found,&n);
+    for (size_t a = 0; a < n && ok; ++a)
+        for (size_t b = a + 1; b < n && ok; ++b)
+            if (!found[a].c->reserved && !found[b].c->reserved &&
+                !(found[a].c->places[l->key].hi < found[b].c->places[l->key].lo))
+                ok = ce_error(error,offset,"key %.*s: its ranges do not ascend through the admitting cases in prefix order",
+                              (int)l->fields[l->key].name.len,l->fields[l->key].name.data);
+    free(found);
+    return ok;
+}
 static CeAtom *word_of(CeLayouts *ls, const Layout *l, const Leaf *leaf) {
     CeAtom *pack = lit(ls,0);
     for (size_t f = l->nfields; f-- > 0;) pack = bin(ls,"or",write_place(ls,&leaf->c->places[f],f),pack);
@@ -601,7 +645,11 @@ static const Layout *earlier(const CeLayouts *ls, const Layout *l) {
 }
 static uint64_t slot_mask(const Place *p) { return p->width ? mask(p->width) << p->shift : 0; }
 
-typedef struct { CeText name; const char *result; const char *params[3]; size_t nparams; bool fields; CeAtom *body; } Function;
+/* An accessor: its parameters are the named ones, every field (`fields`) or
+   the key field alone (`keyed`). */
+typedef struct {
+    CeText name; const char *result; const char *params[3]; size_t nparams; bool fields; CeAtom *body; bool keyed;
+} Function;
 
 static CeText joined(CeLayouts *ls, CeText a, const char *mid, CeText b) {
     size_t m = strlen(mid); unsigned char *s = ce_alloc(&ls->arena,a.len+m+b.len+1);
@@ -616,19 +664,19 @@ static size_t lower(CeLayouts *ls, const Layout *l, Function *out) {
     Leaf *ls_leaves = ce_alloc(&ls->arena,(l->ncases+1)*sizeof(*ls_leaves));
     leaves(l,0,0,0,ls_leaves,&nleaves);
     for (size_t f = 0; f < l->nfields; ++f)
-        out[n++] = (Function){joined(ls,l->name,"_",l->fields[f].name),"value",{"word"},1,false,walk(ls,l,0,0,part_leaf,f)};
-    out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"valid")),"bool",{"word"},1,false,walk(ls,l,0,0,valid_leaf,0)};
+        out[n++] = (Function){joined(ls,l->name,"_",l->fields[f].name),"value",{"word"},1,false,walk(ls,l,0,0,part_leaf,f),false};
+    out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"valid")),"bool",{"word"},1,false,walk(ls,l,0,0,valid_leaf,0),false};
     CeAtom *any = lit(ls,0), *encode = encode_expr(ls,l);
     for (size_t i = nleaves; i-- > 0;) any = bin(ls,"or",admits_case(ls,l,ls_leaves[i].c),any);
-    out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"admits")),"bool",{0},0,true,any};
-    out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"encode")),"word",{0},0,true,encode};
+    out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"admits")),"bool",{0},0,true,any,false};
+    out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"encode")),"word",{0},0,true,encode,false};
     if (l->ncases == 1) {
         const Case *c = &l->cases[0];
         for (size_t f = 0; f < l->nfields; ++f) {
             const Place *p = &c->places[f];
             CeAtom *body = !p->width ? var(ls,0) :
                 bin(ls,"or",bin(ls,"and",var(ls,0),op(ls,"not",1,lit(ls,slot_mask(p)),NULL,NULL)),write_place(ls,p,1));
-            out[n++] = (Function){joined(ls,l->name,"_set_",l->fields[f].name),"word",{"word","value"},2,false,body};
+            out[n++] = (Function){joined(ls,l->name,"_set_",l->fields[f].name),"word",{"word","value"},2,false,body,false};
         }
         bool derived = false;
         uint64_t any_mask = 0, all_mask = 0, own_mask = 0, every = 0, kept = 0;
@@ -642,23 +690,101 @@ static size_t lower(CeLayouts *ls, const Layout *l, Function *out) {
             if (!ce_is(k,"occurrence")) kept |= m;
         }
         if (derived) {
-            out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"derive_init")),"word",{0},0,false,lit(ls,all_mask)};
+            out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"derive_init")),"word",{0},0,false,lit(ls,all_mask),false};
             out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"derive_child")),"word",{"acc","child"},2,false,
                 bin(ls,"or",bin(ls,"and",bin(ls,"or",var(ls,0),var(ls,1)),lit(ls,any_mask)),
-                    bin(ls,"and",bin(ls,"and",var(ls,0),var(ls,1)),lit(ls,all_mask)))};
+                    bin(ls,"and",bin(ls,"and",var(ls,0),var(ls,1)),lit(ls,all_mask))),false};
             out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"derive_finish")),"word",{"acc","own"},2,false,
-                bin(ls,"or",bin(ls,"and",var(ls,0),lit(ls,any_mask | all_mask)),bin(ls,"and",var(ls,1),lit(ls,own_mask)))};
+                bin(ls,"or",bin(ls,"and",var(ls,0),lit(ls,any_mask | all_mask)),bin(ls,"and",var(ls,1),lit(ls,own_mask))),false};
             out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"value_copy")),"word",{"word"},1,false,
-                bin(ls,"and",var(ls,0),lit(ls,every))};
+                bin(ls,"and",var(ls,0),lit(ls,every)),false};
             out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"store")),"word",{"word"},1,false,
-                bin(ls,"and",var(ls,0),lit(ls,kept))};
+                bin(ls,"and",var(ls,0),lit(ls,kept)),false};
             out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"relocate")),"word",{"word"},1,false,
-                bin(ls,"and",var(ls,0),lit(ls,every))};
+                bin(ls,"and",var(ls,0),lit(ls,every)),false};
         }
     }
     return n;
 }
 static size_t lowered_bound(const Layout *l) { return l->nfields * 2 + 10; }
+
+/* ---- Views -------------------------------------------------------------------
+   For a word with several cases, each field's bounds in the word's case. For a
+   keyed layout, each field's bounds in the case that holds a key, and whether
+   some case holds it. For a keyed layout or one with a single admitting case,
+   the unchecked encoder: one comparison of the key per case, correct for
+   admitted values only. LayoutViews.lowerViews states the same list. */
+static CeAtom *lo_leaf(CeLayouts *ls, const Layout *l, const Case *c, size_t field) {
+    (void)l; return lit(ls,c->places[field].lo);
+}
+static CeAtom *hi_leaf(CeLayouts *ls, const Layout *l, const Case *c, size_t field) {
+    (void)l; return lit(ls,c->places[field].hi);
+}
+static CeAtom *one_leaf(CeLayouts *ls, const Layout *l, const Case *c, size_t field) {
+    (void)l; (void)c; (void)field; return lit(ls,1);
+}
+/* The first admitting case whose key range holds the key (parameter 0). */
+static CeAtom *by_key(CeLayouts *ls, const Layout *l, LeafExpr leaf, size_t field) {
+    size_t n = 0;
+    Leaf *found = ce_alloc(&ls->arena,(l->ncases+1)*sizeof(*found));
+    leaves(l,0,0,0,found,&n);
+    CeAtom *rest = lit(ls,0);
+    for (size_t i = n; i-- > 0;) {
+        const Case *c = found[i].c;
+        if (c->reserved) continue;
+        const Place *p = &c->places[l->key];
+        rest = op(ls,"ite",3,bin(ls,"and",at_least(ls,p->lo,var(ls,0)),at_most(ls,var(ls,0),p->hi)),
+                  leaf(ls,l,c,field),rest);
+    }
+    return rest;
+}
+/* A field shifted into its slot without truncation, and a case's word made of
+   such fields: exact for admitted values, which fit their slots. */
+static CeAtom *place_value(CeLayouts *ls, const Place *p, uint64_t j) {
+    if (!p->width) return lit(ls,0);
+    return shift(ls,"shl",p->offset ? bin(ls,"sub",var(ls,j),lit(ls,p->offset)) : var(ls,j),p->shift);
+}
+static CeAtom *packed_word(CeLayouts *ls, const Layout *l, const Leaf *leaf) {
+    CeAtom *pack = lit(ls,0);
+    for (size_t f = l->nfields; f-- > 0;) pack = bin(ls,"or",place_value(ls,&leaf->c->places[f],f),pack);
+    uint64_t prefix = leaf->depth ? leaf->prefix << (l->width - leaf->depth) : 0;
+    return bin(ls,"or",lit(ls,prefix),pack);
+}
+static CeAtom *pack_chain(CeLayouts *ls, const Layout *l, uint64_t key) {
+    size_t n = 0, m = 0;
+    Leaf *found = ce_alloc(&ls->arena,(l->ncases+1)*sizeof(*found));
+    leaves(l,0,0,0,found,&n);
+    for (size_t i = 0; i < n; ++i) if (!found[i].c->reserved) found[m++] = found[i];
+    if (!m) return lit(ls,0);
+    CeAtom *rest = packed_word(ls,l,&found[m-1]);
+    for (size_t i = m - 1; i-- > 0;)
+        rest = op(ls,"ite",3,at_most(ls,var(ls,key),found[i].c->places[key].hi),packed_word(ls,l,&found[i]),rest);
+    return rest;
+}
+static size_t lower_views(CeLayouts *ls, const Layout *l, Function *out) {
+    size_t n = 0, admitting = 0;
+    if (l->trie[0].leaf < 0)
+        for (size_t f = 0; f < l->nfields; ++f) {
+            CeText field = joined(ls,l->name,"_",l->fields[f].name);
+            out[n++] = (Function){joined(ls,field,"_lo",(CeText){0}),"value",{"word"},1,false,walk(ls,l,0,0,lo_leaf,f),false};
+            out[n++] = (Function){joined(ls,field,"_hi",(CeText){0}),"value",{"word"},1,false,walk(ls,l,0,0,hi_leaf,f),false};
+        }
+    if (l->key >= 0) {
+        CeText key = l->fields[l->key].name;
+        for (size_t f = 0; f < l->nfields; ++f) {
+            CeText field = joined(ls,l->name,"_",l->fields[f].name);
+            out[n++] = (Function){joined(ls,field,"_lo_for_",key),"value",{0},0,false,by_key(ls,l,lo_leaf,f),true};
+            out[n++] = (Function){joined(ls,field,"_hi_for_",key),"value",{0},0,false,by_key(ls,l,hi_leaf,f),true};
+        }
+        out[n++] = (Function){joined(ls,l->name,"_admits_",key),"bool",{0},0,false,by_key(ls,l,one_leaf,0),true};
+    }
+    for (size_t c = 0; c < l->ncases; ++c) admitting += !l->cases[c].reserved;
+    if (l->key >= 0 || admitting == 1)
+        out[n++] = (Function){joined(ls,l->name,"_",ce_cstr(&ls->arena,"pack")),"word",{0},0,true,
+                              pack_chain(ls,l,l->key >= 0 ? (uint64_t)l->key : 0),false};
+    return n;
+}
+static size_t views_bound(const Layout *l) { return l->nfields * 4 + 2; }
 
 static bool add_export_name(CeText **names, size_t *len, CeText name, CeError *error) {
     for (size_t i = 0; i < *len; ++i)
@@ -672,8 +798,11 @@ static bool export_names(CeLayouts *ls, CeError *error) {
     CeText *names = NULL; size_t len = 0; bool ok = true;
     for (size_t i = 0; i < ls->len && ok; ++i) {
         const Layout *l = &ls->items[i];
-        Function *fs = ce_alloc(&ls->arena,lowered_bound(l)*sizeof(*fs));
+        Function *fs = ce_alloc(&ls->arena,(lowered_bound(l)+views_bound(l))*sizeof(*fs));
         size_t n = lower(ls,l,fs);
+        n += lower_views(ls,l,fs+n);
+        for (size_t c = 0; c < l->nconstants && ok; ++c)
+            ok = add_export_name(&names,&len,joined(ls,l->name,"_",l->constants[c].name),error);
         for (size_t j = 0; j < n && ok; ++j) {
             ok = add_export_name(&names,&len,fs[j].name,error);
             if (ok) {
@@ -706,6 +835,7 @@ static void write_function_atom(const Layout *l, const Function *f, FILE *file) 
     fputs("(Function ",file); ce_quote(file,f->name); fputs(" (Params",file);
     if (f->fields)
         for (size_t i = 0; i < l->nfields; ++i) { fputc(' ',file); ce_quote(file,l->fields[i].name); }
+    else if (f->keyed) { fputc(' ',file); ce_quote(file,l->fields[l->key].name); }
     else for (size_t i = 0; i < f->nparams; ++i) fprintf(file," \"%s\"",f->params[i]);
     fprintf(file,") \"%s\" ",f->result); ce_atom_write(f->body,file); fputc(')',file);
 }
@@ -716,10 +846,20 @@ void ce_layout_functions(const CeLayouts *ls, size_t index, FILE *file) {
     fprintf(file,"(cesta-layout-functions/1 %.*s",(int)l->name.len,l->name.data);
     for (size_t i = 0; i < n; ++i) { fputc(' ',file); write_function_atom(l,&fs[i],file); }
     fputs(")\n",file);
+    Function *vs = ce_alloc(&((CeLayouts *)ls)->arena,views_bound(l)*sizeof(*vs));
+    size_t nv = lower_views((CeLayouts *)ls,l,vs);
+    fprintf(file,"(cesta-layout-views/1 %.*s (Constants",(int)l->name.len,l->name.data);
+    for (size_t i = 0; i < l->nconstants; ++i) {
+        fputs(" (",file); ce_quote(file,joined((CeLayouts *)ls,l->name,"_",l->constants[i].name));
+        fprintf(file," %llu)",(unsigned long long)l->constants[i].value);
+    }
+    fputc(')',file);
+    for (size_t i = 0; i < nv; ++i) { fputc(' ',file); write_function_atom(l,&vs[i],file); }
+    fputs(")\n",file);
     const Layout *old = earlier(ls,l);
     if (old) {
         Function m = {joined((CeLayouts *)ls,l->name,"_from_",old->name),"word",{"old"},1,false,
-                      migration((CeLayouts *)ls,old,l)};
+                      migration((CeLayouts *)ls,old,l),false};
         fprintf(file,"(cesta-layout-migration/1 %.*s %.*s ",(int)old->name.len,old->name.data,(int)l->name.len,l->name.data);
         write_function_atom(l,&m,file); fputs(")\n",file);
     }
@@ -804,12 +944,16 @@ bool ce_layout_header(const CeLayouts *ls, const char *guard, FILE *file, CeErro
             atomic ? "#include <stdatomic.h>\n" : "");
     for (size_t i = 0; i < ls->len; ++i) {
         const Layout *l = &ls->items[i]; const char *type = word_type(l->width);
-        Function *fs = ce_alloc(&((CeLayouts *)ls)->arena,lowered_bound(l)*sizeof(*fs));
+        Function *fs = ce_alloc(&((CeLayouts *)ls)->arena,(lowered_bound(l)+views_bound(l))*sizeof(*fs));
         size_t n = lower((CeLayouts *)ls,l,fs);
+        n += lower_views((CeLayouts *)ls,l,fs+n);
         fprintf(file,"\n/* %.*s: %llu-bit word. */\n",(int)l->name.len,l->name.data,(unsigned long long)l->width);
+        for (size_t c = 0; c < l->nconstants; ++c)
+            fprintf(file,"#define %.*s_%.*s UINT64_C(%llu)\n",(int)l->name.len,l->name.data,
+                    (int)l->constants[c].name.len,l->constants[c].name.data,(unsigned long long)l->constants[c].value);
         for (size_t k = 0; k < n; ++k) {
             const Function *f = &fs[k];
-            size_t np = f->fields ? l->nfields : f->nparams;
+            size_t np = f->fields ? l->nfields : f->keyed ? 1 : f->nparams;
             const char **params = ce_alloc(&((CeLayouts *)ls)->arena,(np+1)*sizeof(*params));
             const char **wrapped = ce_alloc(&((CeLayouts *)ls)->arena,(np+1)*sizeof(*wrapped));
             const char *result = ce_is(ce_cstr(&((CeLayouts *)ls)->arena,f->result),"bool") ? "bool" :
@@ -832,10 +976,10 @@ bool ce_layout_header(const CeLayouts *ls, const char *guard, FILE *file, CeErro
                 /* Field names may also be C keywords, typedefs or stdint
                    macros. Prefix the C binder; expression variables retain
                    their indexed, logical field names in function records. */
-                params[j] = f->fields ? (const char *)joined((CeLayouts *)ls,
-                    ce_cstr(&((CeLayouts *)ls)->arena,"cesta_value_"),
-                    (const char *)l->fields[j].name.data,(CeText){0}).data : f->params[j];
-                bool word = !f->fields && (!strcmp(params[j],"word") || !strcmp(params[j],"acc") ||
+                CeText logical = f->fields ? l->fields[j].name : f->keyed ? l->fields[l->key].name : (CeText){0};
+                params[j] = f->fields || f->keyed ? (const char *)joined((CeLayouts *)ls,
+                    ce_cstr(&((CeLayouts *)ls)->arena,"cesta_value_"),"",logical).data : f->params[j];
+                bool word = !f->fields && !f->keyed && (!strcmp(params[j],"word") || !strcmp(params[j],"acc") ||
                                            !strcmp(params[j],"child") || !strcmp(params[j],"own"));
                 fprintf(file,"%s%s %s",j ? ", " : "",word ? type : "uint64_t",params[j]);
             }

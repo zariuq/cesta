@@ -186,12 +186,33 @@ def kernel_admission(work, data_path, chunk=100, lean_memory_mb=None):
     return {"rows": len(rows), "chunks": len(chunks)}
 
 
-def cetta(work, source, lean_memory_mb=None):
-    """The actual CeTTa runtime counters, extracted independently of the exporter."""
-    header = (source / "stats.h").read_text(); body = (source / "stats.c").read_text()
-    enum = header[header.index("typedef enum {"):header.index("} CettaRuntimeCounter;") + len("} CettaRuntimeCounter;")]
+def project_declarations(path):
+    """Read inline declarations and a project's checked-in generated headers."""
+    text = path.read_text()
+    for include in re.findall(r'^\s*#include\s+"(generated/[^"\n]+)"', text, re.M):
+        header = (path.parent / include).resolve()
+        if not header.is_relative_to(path.parent.resolve()):
+            raise AssertionError("generated counter include leaves its source directory")
+        text += "\n" + header.read_text()
+    return text
+
+
+def cetta_fragments(source):
+    """The actual C declarations, independently of authored table data."""
+    header = project_declarations(source / "stats.h")
+    body = project_declarations(source / "stats.c")
+    end = header.index("} CettaRuntimeCounter;") + len("} CettaRuntimeCounter;")
+    start = header.rfind("typedef enum {", 0, end)
+    assert start >= 0, "counter enumeration has no declaration"
+    enum = header[start:end]
     start = body.index("static const char *const CETTA_RUNTIME_COUNTER_NAMES[")
     names = body[start:body.index("};", start) + 2]
+    return enum, names
+
+
+def cetta(work, source, lean_memory_mb=None):
+    """The actual CeTTa runtime counters, extracted independently of the exporter."""
+    enum, names = cetta_fragments(source)
     rows = [(n, int(v)) for n, v in re.findall(r"CETTA_RUNTIME_COUNTER_([A-Z0-9_]+)\s*=\s*(\d+)", enum)]
     assert rows[-1][0] == "COUNT"; rows = rows[:-1]
     spellings = re.findall(r'"([^"]*)"', names)

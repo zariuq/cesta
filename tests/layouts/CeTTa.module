@@ -33,6 +33,7 @@ Module CeTTa {
         (Reserved (Prefix 4 15)
           (Place handle (Bits 0 28) (Offset HandleLimit))
           (Place generation (Bits 28 0)))
+        (Key handle)
         (Location "immutable"));
       (VarId) == (Layout "cesta-layout/1"
         (Word 64)

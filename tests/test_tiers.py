@@ -27,6 +27,8 @@ test-conflict-admission test-schema-extension-admission test-type-admission test
 test-presentation-corpora test-semantic-corpora test-pp-corpora test-provenance-corpora test-mutants test-petta
 test-portable-readers test-workbench test-source test-export-counters-cetta test-export-admission
 test-layout-admission test-layout-cetta test-layout-sanitizers test-layout-bridge test-layout-model
+test-operation-audit test-operation-model test-operations test-operation-proposal
+test-table-model test-table-admission test-operation-protocol test-protocol-model test-protocol-admission
 """.split()
 
 

@@ -62,6 +62,11 @@ MUTANTS = [
     ("AtomsSplit", "(Alias term_stable hash_stable", "(Alias term_stable hash_stabel", "alias names an undeclared field"),
     ("AtomsSplit", '(Location "atomic")', '(Location "single-owner")',
      "hash_valid is written after publication in a word that is not atomic"),
+    ("Frames", "(Key handle)", "(Key generation)",
+     "key generation: its ranges do not ascend through the admitting cases in prefix order"),
+    ("Frames", "(Key handle)", "(Key gen)", "key names an undeclared field"),
+    ("Frames", "(Key handle)", "(Key handle) (Key handle)", "layout declares two keys"),
+    ("Frames", '(Field generation "value")', '(Field pack "value")', "field name pack would name another accessor"),
 ]
 
 
@@ -85,8 +90,15 @@ class Layout:
         self.leaves = []
         self.trie = data[4]
         self.collect(self.trie, 0, 0)
-        last = data[len(data) - 1]
-        self.origin = str(last[1]) if str(last[0]) == "From" else None
+        sections = {str(x[0]): x for x in data[5:]}
+        self.origin = str(sections["From"][1]) if "From" in sections else None
+        names = [f for f, kind in self.fields]
+        self.key = names.index(str(sections["Key"][1])) if "Key" in sections else None
+        self.constants = []
+        for c in sections.get("Constants", [None])[1:]:
+            value = number(c[2])
+            assert evaluate(c[3], dict(self.constants)) == value, (self.name, str(c[1]))
+            self.constants.append((str(c[1]), value))
 
     def collect(self, node, prefix, depth):
         if str(node[0]) == "Node":
@@ -129,12 +141,48 @@ class Layout:
                 return word
         return None
 
+    def bounds(self, word, j):
+        place = self.leaf(word)[1][j]
+        return place[3], place[4]
+
+    def key_case(self, x):
+        for leaf in self.leaves:
+            if not leaf[0] and leaf[1][self.key][3] <= x <= leaf[1][self.key][4]:
+                return leaf
+        return None
+
+    def admitting(self):
+        return [leaf for leaf in self.leaves if not leaf[0]]
+
     def masks(self):
         places = self.leaves[0][1]
         kinds = {}
         for (name, kind), (s, n, off, lo, hi) in zip(self.fields, places):
             kinds[kind] = kinds.get(kind, 0) | (((1 << n) - 1) << s)
         return kinds
+
+
+def evaluate(a, constants):
+    """A constant expression, evaluated independently of Cesta."""
+    if not isinstance(a, list):
+        text = str(a)
+        return int(text) if text[0].isdigit() else constants[text]
+    head, args = str(a[0]), a[1:]
+    if head == "Hex":
+        return int(args[0].data.decode(), 16)
+    values = [evaluate(x, constants) for x in args]
+    if head == "Pow2":
+        return 1 << values[0]
+    if head == "Sum":
+        return sum(values)
+    if head == "Times":
+        product = 1
+        for v in values:
+            product *= v
+        return product
+    if head == "Minus":
+        return values[0] - values[1]
+    raise AssertionError("unknown constant form " + head)
 
 
 def c_array(name, values):
@@ -180,6 +228,44 @@ def harness(layouts, header):
         checks.append(f'for (size_t i = 0; i < sizeof {n}_admits_expected / sizeof *{n}_admits_expected; ++i) {{ '
                       f'check("{n}_admits", {n}_admits({arguments}), {n}_admits_expected[i]); '
                       f'check("{n}_encode", {n}_encode({arguments}), {n}_encode_expected[i]); }}')
+        for constant, value in layout.constants:
+            checks.append(f'check("{n}_{constant}", {n}_{constant}, UINT64_C({value}));')
+        if len(layout.leaves) > 1:
+            for j, (field, kind) in enumerate(layout.fields):
+                for side, k in (("lo", 0), ("hi", 1)):
+                    body.append(c_array(f"{n}_{field}_{side}_expected", [layout.bounds(x, j)[k] for x in words]))
+                    checks.append(f'for (size_t i = 0; i < sizeof {n}_words / sizeof *{n}_words; ++i) '
+                                  f'check("{n}_{field}_{side}", {n}_{field}_{side}({n}_words[i]), '
+                                  f'{n}_{field}_{side}_expected[i]);')
+        if layout.key is not None:
+            key = layout.fields[layout.key][0]
+            keys = {0, (1 << 64) - 1} | {rng.randrange(1 << 40) for _ in range(500)}
+            for reserved, places, prefix, depth in layout.leaves:
+                lo, hi = places[layout.key][3], places[layout.key][4]
+                keys |= {lo, hi, max(lo, 1) - 1, min(hi + 1, (1 << 64) - 1), (lo + hi) // 2}
+            keys = sorted(keys)
+            body.append(c_array(f"{n}_keys", keys))
+            for j, (field, kind) in enumerate(layout.fields):
+                for side, k in (("lo", 3), ("hi", 4)):
+                    expected = [layout.key_case(x)[1][j][k] if layout.key_case(x) else 0 for x in keys]
+                    body.append(c_array(f"{n}_{field}_{side}_for_expected", expected))
+                    checks.append(f'for (size_t i = 0; i < sizeof {n}_keys / sizeof *{n}_keys; ++i) '
+                                  f'check("{n}_{field}_{side}_for_{key}", {n}_{field}_{side}_for_{key}({n}_keys[i]), '
+                                  f'{n}_{field}_{side}_for_expected[i]);')
+            body.append(c_array(f"{n}_admits_key_expected", [int(layout.key_case(x) is not None) for x in keys]))
+            checks.append(f'for (size_t i = 0; i < sizeof {n}_keys / sizeof *{n}_keys; ++i) '
+                          f'check("{n}_admits_{key}", {n}_admits_{key}({n}_keys[i]), {n}_admits_key_expected[i]);')
+        if layout.key is not None or len(layout.admitting()) == 1:
+            # The unchecked encoder, on admitted values only.
+            admitted = [vs for vs in values if layout.encode(vs) is not None]
+            for reserved, places, prefix, depth in layout.admitting():
+                for _ in range(200):
+                    admitted.append([rng.choice([lo, hi, rng.randint(lo, hi)]) for s, nb, off, lo, hi in places])
+            body.append(c_array(f"{n}_packed_values", [v for vs in admitted for v in vs]))
+            body.append(c_array(f"{n}_packed_expected", [layout.encode(vs) for vs in admitted]))
+            packed = ", ".join(f"{n}_packed_values[i * {arity} + {j}]" for j in range(arity))
+            checks.append(f'for (size_t i = 0; i < sizeof {n}_packed_expected / sizeof *{n}_packed_expected; ++i) '
+                          f'check("{n}_pack", {n}_pack({packed}), {n}_packed_expected[i]);')
         if len(layout.leaves) == 1:
             places = layout.leaves[0][1]
             for j, (field, kind) in enumerate(layout.fields):

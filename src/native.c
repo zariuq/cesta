@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "native.h"
 #include "macro.h"
+#include "protocol.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -59,6 +60,10 @@ typedef struct {
     const CeAtom *atom;
     size_t begin, end;
     CeTree *site;
+    bool protocol;
+    CeText text;
+    CeText *dependencies;
+    size_t ndependencies;
 } NativeImport;
 typedef struct {
     const CeGrammar *grammar; CeMacros *macros;
@@ -67,7 +72,7 @@ typedef struct {
 } Native;
 
 static bool accepts(void *context, const CeAtom *a, int sort) {
-    static const char *names[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros"};
+    static const char *names[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros","use-protocols"};
     Native *native = context;
     const CeSymbol *symbol = &native->grammar->symbols[sort];
     if (symbol->kind != CE_NONTERMINAL || symbol->list_element >= 0) return false;
@@ -116,10 +121,10 @@ static bool conditional(Native *native, const CeAtom *a, int sort, int parent,
 
 static bool form(Native *native, const CeAtom *a, int sort, int parent, CeArena *arena,
                   FILE *file, CeAtomDecoder recurse, void *context, CeError *error, size_t depth) {
-    if (head(a,"use-macros")) {
+    if (head(a,"use-macros") || head(a,"use-protocols")) {
         CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;
-        return (native->macros && ce_is(position,"ExternalDeclaration")) ||
-            ce_error(error,a->offset,"use-macros must occur directly in the unit");
+        return ((native->macros || head(a,"use-protocols")) && ce_is(position,"ExternalDeclaration")) ||
+            ce_error(error,a->offset,"module imports must occur directly in the unit");
     }
     if (head(a,"cpp-if") || head(a,"cpp-ifdef") || head(a,"cpp-ifndef"))
         return conditional(native,a,sort,parent,arena,file,recurse,context,error,depth);
@@ -184,7 +189,7 @@ static unsigned extension(void *context, const CeAtom *a, int sort, int parent,
     Native *native = context;
     unsigned macro = ce_macros_expand(native->macros,a,sort,parent,arena,out,recurse,recurse_context,error,depth);
     if (macro != CE_EXTENSION_UNHANDLED) return macro;
-    static const char *names[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros"};
+    static const char *names[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros","use-protocols"};
     bool known = false;
     for (size_t i = 0; i < sizeof(names)/sizeof(*names); ++i) known |= head(a,names[i]);
     if (!known) return CE_EXTENSION_UNHANDLED;
@@ -201,7 +206,7 @@ static unsigned extension(void *context, const CeAtom *a, int sort, int parent,
     if (!finish(arena,file,&buffer,&length,&spelling,error)) return CE_EXTENSION_ERROR;
     CeTree *tree = ce_alloc(arena,sizeof(*tree));
     tree->symbol = sort; tree->production = CE_TREE_SOURCE; tree->offset = a->offset; tree->spelling = spelling;
-    if (head(a,"use-macros"))
+    if (head(a,"use-macros") || head(a,"use-protocols"))
         for (size_t i = 0; i < native->nimports; ++i)
             if (native->imports[i].atom == a) native->imports[i].site = tree;
     *out = tree; return CE_EXTENSION_EXPANDED;
@@ -229,12 +234,16 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
     bool ok = true;
     if (head(atom,"unit")) for (size_t i = 1; i < atom->len && ok; ++i) {
         const CeAtom *use = atom->items[i];
-        if (!head(use,"use-macros")) continue;
+        bool protocol = head(use,"use-protocols");
+        if (!head(use,"use-macros") && !protocol) continue;
         if (use->len != 3 || use->items[1]->kind != CE_ATOM_TEXT || use->items[2]->kind != CE_ATOM_SYMBOL) {
-            ok = ce_error(error,use->offset,"use-macros requires a module filename and theory name"); break;
+            ok = ce_error(error,use->offset,"module import requires a filename and theory name"); break;
         }
         const char *name = (const char *)use->items[1]->text.data;
         const char *path = name;
+        if (strlen(name) != use->items[1]->text.len) {
+            ok = ce_error(error,use->offset,"module filename contains a null byte"); break;
+        }
         if (name[0] != '/' && identity) {
             const char *slash = strrchr(identity,'/');
             if (slash) {
@@ -242,6 +251,15 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
                 char *full = ce_alloc(arena,prefix+strlen(name)+1);
                 memcpy(full,identity,prefix); strcpy(full+prefix,name); path = full;
             }
+        }
+        if (protocol) {
+            NativeImport *import = &native.imports[native.nimports++];
+            import->atom = use; import->protocol = true;
+            ok = ce_protocol_expand(arena,path,(const char *)use->items[2]->text.data,
+                                    &import->text,&import->dependencies,&import->ndependencies,
+                                    environment ? environment->plan : NULL,error);
+            if (!ok) error->offset = use->offset;
+            continue;
         }
         if (!native.macros) {
             native.macros = ce_macros_new(g,atom,error);
@@ -253,14 +271,15 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
         }
         size_t begin = ce_macros_rules(native.macros);
         ok = native.macros && ce_macros_load(native.macros,path,(const char *)use->items[2]->text.data,error);
-        if (ok) native.imports[native.nimports++] = (NativeImport){use,begin,ce_macros_rules(native.macros),NULL};
+        if (ok) native.imports[native.nimports++] = (NativeImport){.atom=use,.begin=begin,.end=ce_macros_rules(native.macros)};
         if (!ok) error->offset = use->offset;
     }
     ok = ok && ce_builtin_view(g,key,&profile,error) &&
         ce_view_expand_open(&profile,atom,g->entries[0],arena,&tree,extension,accepts,&native,error);
     for (size_t i = 0; i < native.nimports && ok; ++i) {
         NativeImport *use = &native.imports[i];
-        if (!use->site) ok = ce_error(error,use->atom->offset,"macro import has no source position");
+        if (!use->site) ok = ce_error(error,use->atom->offset,"module import has no source position");
+        else if (use->protocol) use->site->spelling = use->text;
         else ok = ce_macros_prelude(native.macros,use->begin,use->end,arena,&use->site->spelling,error);
     }
     if (ok) {
@@ -273,13 +292,18 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
             else { fclose(file); free(buffer); }
         }
     }
-    if (ok && native.macros) {
+    if (ok) {
         out->ndependencies = ce_macros_dependencies(native.macros);
+        for (size_t i = 0; i < native.nimports; ++i) out->ndependencies += native.imports[i].ndependencies;
         out->dependencies = ce_alloc(arena,out->ndependencies*sizeof(*out->dependencies));
-        for (size_t i = 0; i < out->ndependencies; ++i) {
+        size_t nmacros = ce_macros_dependencies(native.macros), next = nmacros;
+        for (size_t i = 0; i < nmacros; ++i) {
             CeText path = ce_macros_dependency(native.macros,i);
             out->dependencies[i] = ce_text(arena,path.data,path.len);
         }
+        for (size_t i = 0; i < native.nimports; ++i)
+            for (size_t j = 0; j < native.imports[i].ndependencies; ++j)
+                out->dependencies[next++] = native.imports[i].dependencies[j];
     }
     ce_macros_free(native.macros); ce_view_free(&profile); ce_lazy_lexer_free(&own); return ok;
 }
@@ -293,6 +317,7 @@ bool ce_native_text(const CeGrammar *g, CeArena *arena, CeText source,
 
 static int expand_command(int argc, char **argv, bool readable) {
     const char *plan_path = NULL; FILE *plan = NULL;
+    char *plan_text = NULL; size_t plan_length = 0;
     const char *path = NULL, *output = NULL, *presentation = NULL; bool gnu = true;
     const char *compiler = getenv("CESTA_CC"), *cache = getenv("CESTA_BUILD_DIR");
     if (!compiler || !*compiler) compiler = "cc";
@@ -324,16 +349,45 @@ static int expand_command(int argc, char **argv, bool readable) {
     if (!path) { ce_error(&error,0,"expand requires an input file"); goto done; }
     flags[0] = (char *)compiler;
     if (!ce_read_file(&arena,path,&source,&error) || !ce_builtin_language(&grammar,gnu,&error) ||
-        (plan_path && !(plan = fopen(plan_path,"wb")) && ce_error(&error,0,"cannot open %s",plan_path)) ||
+        (plan_path && !(plan = open_memstream(&plan_text,&plan_length)) &&
+             ce_error(&error,0,"cannot allocate export plan")) ||
         !(readable ? ce_native_export(&grammar,&arena,source,presentation,path,nflags,flags,cache,plan,&expanded,&error)
                    : ce_native_prepare(&grammar,&arena,source,presentation,path,nflags,flags,cache,&expanded,&error)))
         goto done;
+    if (plan) {
+        bool good = !ferror(plan);
+        if (fclose(plan)) good = false;
+        plan = NULL;
+        if (!good) { ce_error(&error,0,"cannot finish export plan"); goto done; }
+    }
+    /* Read every imported module before opening either output. An output alias
+     * must not truncate source, including a transitive import or a hard link. */
+    const char *outputs[] = {output,plan_path};
+    for (size_t i = 0; i < 2; ++i) if (outputs[i]) {
+        if (ce_same_file(outputs[i],path)) {
+            ce_error(&error,0,"output would overwrite the input document"); goto done;
+        }
+        for (size_t j = 0; j < expanded.ndependencies; ++j)
+            if (ce_same_file(outputs[i],(const char *)expanded.dependencies[j].data)) {
+                ce_error(&error,0,"output would overwrite a source dependency"); goto done;
+            }
+    }
+    if (output && plan_path && ce_same_file(output,plan_path)) {
+        ce_error(&error,0,"C and plan outputs must have distinct paths"); goto done;
+    }
     text = expanded.text;
     FILE *file = output ? fopen(output,"wb") : stdout;
     if (!file) { ce_error(&error,0,"cannot open expanded C: %s",strerror(errno)); goto done; }
     bool ok = bytes(file,text);
     if (output) ok = fclose(file) == 0 && ok;
     if (!ok) { ce_error(&error,0,"cannot write expanded C"); goto done; }
+    if (plan_path) {
+        FILE *record = fopen(plan_path,"wb");
+        if (!record) { ce_error(&error,0,"cannot open %s",plan_path); goto done; }
+        bool written = fwrite(plan_text,1,plan_length,record) == plan_length;
+        if (fclose(record)) written = false;
+        if (!written) { ce_error(&error,0,"cannot write export plan"); goto done; }
+    }
     result = 0;
 done:
     if (result) {
@@ -342,7 +396,8 @@ done:
             if (source.data[i] == '\n') { ++line; column = 1; } else ++column;
         fprintf(stderr,"%s:%zu:%zu: %s\n",path ? path : "cesta",line,column,error.message);
     }
-    if (plan && fclose(plan) && !result) { fprintf(stderr,"cannot write %s\n",plan_path); result = 1; }
+    if (plan) fclose(plan);
+    free(plan_text);
     ce_grammar_free(&grammar); ce_arena_free(&arena); return result;
 }
 

@@ -60,6 +60,10 @@ From        (From OLD): this layout is a newer version of the layout OLD,
             the same order, and each admitting case of OLD must lie inside
             one admitting case of this layout, so every old word has a new
             word.
+Key         (Key FIELD): FIELD chooses the case. Its ranges must ascend
+            through the admitting cases in prefix order, each lying wholly
+            below the next, so a value's case is the one whose range holds
+            its FIELD.
 
 Checks
 ------
@@ -77,20 +81,24 @@ A layout is refused when:
     hold in some case;
   - a field written after publication shares a word that is not atomic;
   - a field name would name another accessor;
-  - a word with several cases carries a field of a derived kind.
+  - a word with several cases carries a field of a derived kind;
+  - a key names no field, or its ranges do not ascend through the admitting
+    cases in prefix order.
 
 Normalized form
 ---------------
 
   (cesta-layout/1 NAME WIDTH (Fields (FIELD KIND WRITTEN) ...) TRIE
     (Location DISCIPLINE) (Aliases (NAME FIELD CONDITION) ...)
-    (Requires (FIELD BITS REASON) ...) [(From OLD)])
+    (Requires (FIELD BITS REASON) ...) [(From OLD)] [(Key FIELD)]
+    [(Constants (Const NAME VALUE EXPRESSION) ...)])
 
   TRIE ::= (Leaf "admits"|"reserved" (Place SHIFT WIDTH OFFSET LO HI) ...)
          | (Node TRIE TRIE)
 
-Constants are evaluated, prefixes become a binary trie whose leaves are the
-cases, and every case lists its places in field order.
+Constants are evaluated, and listed with their values and expressions;
+prefixes become a binary trie whose leaves are the cases, and every case
+lists its places in field order.
 
 Accessors
 ---------
@@ -111,6 +119,30 @@ with derived kinds gets NAME_derive_init(), NAME_derive_child(acc, child)
 and NAME_derive_finish(acc, own), which build a parent's word from its
 children's, and NAME_value_copy, NAME_store and NAME_relocate, which keep
 exactly the kinds each operation keeps: storing drops occurrence marks.
+
+Every declared constant C is exported as #define NAME_C UINT64_C(VALUE).
+
+Views follow the accessors. A word with several cases gets, for each field,
+
+  uint64_t NAME_F_lo(uintW_t word)       the field's lower bound in the word's case
+  uint64_t NAME_F_hi(uintW_t word)       its upper bound there
+
+A layout with (Key K) gets, for each field,
+
+  uint64_t NAME_F_lo_for_K(uint64_t K)   the field's lower bound in the case
+                                          whose range holds K (0 when none does)
+  uint64_t NAME_F_hi_for_K(uint64_t K)   its upper bound there
+  bool NAME_admits_K(uint64_t K)          some case's range holds K
+
+A keyed layout, or one with a single admitting case, gets
+
+  uintW_t NAME_pack(uint64_t F1, ...)     the word of an admitted value
+
+pack checks nothing: it compares the key once per case and writes each
+field minus its offset into its slot. For a value NAME_admits accepts it
+returns what NAME_encode returns; for any other value its result is
+unspecified, though never undefined behavior. Call it where the value is
+known to be admitted, and NAME_encode elsewhere.
 
 A word whose location is "atomic" is accessed only atomically:
 NAME_atomic_load acquires, NAME_atomic_store releases, and a single-case
@@ -148,8 +180,8 @@ refused. LayoutKinds proves what the kinds mean over whole terms: a summary
 bit is set exactly when some (every) leaf has it, so a missing bit proves
 absence, and a derived node never carries an occurrence mark.
 
-The header also names each non-atomic field, validity, encoding and kind
-accessor expression CESTA_LAYOUT_NAME_BODY. Migration is function-only.
+The header also names each non-atomic field, validity, encoding, kind and
+view accessor expression CESTA_LAYOUT_NAME_BODY. Migration is function-only.
 BODY formals use private positional names. Printed field parameters use the
 cesta_value_ prefix, so legal logical names such as uint64_t, UINT64_C and
 C keywords cannot capture the C type or literal helpers. Function records
@@ -177,6 +209,17 @@ independent reading of the normalized layouts on boundary and random words.
 At a pinned CeTTa revision, CeTTa's own frame-identity decoder agrees with
 the generated reading and validity on every 32-bit word, and its spelling
 with the generated encoding on every valid identity.
+
+MeTTapedia's LayoutViews proves, for every well-formed layout, that the
+bound views compute the bounds of the word's case and that a decoded value
+lies within them; that under an ascending key a value has a word exactly
+when the case its key selects admits it, and the key views compute that
+case's bounds and whether it exists; and that for an admitted value pack
+writes the value's word. The admission decides, for every declared layout,
+that the recorded views are exactly these, that the key ascends, and that
+the exported constants are the declared ones, each re-evaluated from its
+expression; a pack with a wrong case boundary, a wrong constant and a
+descending key are refused.
 
 MeTTapedia's LayoutMigration proves, for a newer version that embeds the
 older one, that a migrated word reads back as the old word's value, that

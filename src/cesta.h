@@ -19,6 +19,8 @@ CeText ce_cstr(CeArena *arena, const char *str);
 bool ce_equal(CeText left, CeText right);
 bool ce_is(CeText text, const char *str);
 bool ce_error(CeError *error, size_t offset, const char *fmt, ...);
+/* Compare existing inodes, or canonical parent directories for new outputs. */
+bool ce_same_file(const char *a, const char *b);
 bool ce_read_file(CeArena *arena, const char *path, CeText *out, CeError *error);
 void ce_quote(FILE *file, CeText text);
 CeText ce_quoted(CeArena *arena, CeText text);
