@@ -14,3 +14,4 @@
 *.o
 __pycache__/
 *.pyc
+.cesta-generated/

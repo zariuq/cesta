@@ -254,6 +254,27 @@ const CeDFA *ce_lazy_lexer(CeLazyLexer *lexer, const CeGrammar *grammar);
 void ce_lazy_lexer_free(CeLazyLexer *lexer);
 bool ce_tree_print_shared(const CeGrammar *grammar, CeLazyLexer *lexer,
                           const CeTree *tree, int sort, FILE *file, CeError *error);
+/* Source mapping for the compile path. The printer starts a line with
+   #line N "path" at the statement-level sorts marked in `sorts` (outside
+   parentheses) whenever the compiler would otherwise assume another line, and
+   records the source offset behind every printed token. Lines and columns are
+   1-based; columns count bytes. */
+typedef struct { size_t line, column, length, offset; } CeMapToken;
+typedef struct { size_t line, presumed; } CeMapDirective;   /* `line` is the first line it governs */
+typedef struct {
+    CeMapToken *tokens; size_t ntokens, token_capacity;
+    CeMapDirective *directives; size_t ndirectives, directive_capacity;
+} CeSourceMap;
+typedef struct {
+    const unsigned char *sorts;
+    CeText source;
+    const char *path;
+    CeSourceMap *map;
+} CeLineMarks;
+bool ce_tree_print_marked(const CeGrammar *grammar, CeLazyLexer *lexer, const CeTree *tree, int sort,
+                          const CeLineMarks *marks, FILE *file, CeError *error);
+void ce_source_map_free(CeSourceMap *map);
+size_t ce_source_line(CeText source, size_t offset, size_t *column);
 bool ce_tree_print_open_shared(const CeGrammar *grammar, CeLazyLexer *lexer,
                                const CeTree *tree, int sort, FILE *file, CeError *error);
 bool ce_tree_equal(const CeGrammar *grammar, const CeTree *a, const CeTree *b);
@@ -266,6 +287,8 @@ bool ce_tree_emit_checked(const CeGrammar *grammar, const CeTree *tree, int entr
                           const char *path, CeError *error);
 int ce_execute(char *const *argv, CeError *error);
 int ce_execute_stdout(char *const *argv, CeArena *arena, CeText *out, CeError *error);
+/* Runs argv with one output stream (STDOUT_FILENO or STDERR_FILENO) captured. */
+int ce_execute_capture(char *const *argv, int stream, CeArena *arena, CeText *out, CeError *error);
 int ce_cc(int argc, char **argv);
 int ce_source_command(int argc, char **argv, unsigned composition);
 bool ce_builtin_language(CeGrammar *grammar, bool gnu, CeError *error);

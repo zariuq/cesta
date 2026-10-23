@@ -2,6 +2,7 @@
 #include "native.h"
 #include "macro.h"
 #include "protocol.h"
+#include "checked.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -13,8 +14,8 @@ static bool head(const CeAtom *a, const char *name) {
 }
 
 bool ce_native_document(const CeAtom *a) {
-    return head(a,"cesta") && a->len >= 2 &&
-        a->items[1]->kind == CE_ATOM_SYMBOL && ce_is(a->items[1]->text,"native-c/1");
+    return ce_checked_document(a) || (head(a,"cesta") && a->len >= 2 &&
+        a->items[1]->kind == CE_ATOM_SYMBOL && ce_is(a->items[1]->text,"native-c/1"));
 }
 
 static bool bytes(FILE *f, CeText text) {
@@ -69,6 +70,7 @@ typedef struct {
     const CeGrammar *grammar; CeMacros *macros;
     NativeImport *imports; size_t nimports;
     CeLazyLexer *lexer;
+    const CeLineMarks *marks;   /* compile path: branches carry #line too */
 } Native;
 
 static bool accepts(void *context, const CeAtom *a, int sort) {
@@ -86,8 +88,11 @@ static bool branch(Native *native, const CeAtom *a, size_t begin, int sort, int 
                      CeError *error, size_t depth) {
     for (size_t i = begin; i < a->len; ++i) {
         CeTree *tree;
-        if (!recurse(context,a->items[i],sort,parent,arena,&tree,error,depth+1) ||
-            !ce_tree_print_open_shared(native->grammar,native->lexer,tree,sort,file,error)) return false;
+        if (!recurse(context,a->items[i],sort,parent,arena,&tree,error,depth+1)) return false;
+        bool printed = native->marks
+            ? ce_tree_print_marked(native->grammar,native->lexer,tree,sort,native->marks,file,error)
+            : ce_tree_print_open_shared(native->grammar,native->lexer,tree,sort,file,error);
+        if (!printed) return false;
         fputc('\n',file);
     }
     return true;
@@ -216,9 +221,16 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
                        const char *presentation, const char *identity,
                        const CeNativeEnvironment *environment,
                        CeNativeOutput *out, CeError *error) {
+    *out = (CeNativeOutput){0};
     CeAtom *atom;
     if (!ce_atom_read(arena,source,&atom,error)) return false;
     if (ce_wire_envelope(atom) && !ce_wire_unpack(arena,atom,&atom,error)) return false;
+    if (ce_checked_document(atom)) {
+        if (presentation && strcmp(presentation,"native-c/1") && strcmp(presentation,"checked-c/1"))
+            return ce_error(error,atom->offset,"checked document disagrees with the requested presentation");
+        return ce_checked_text(arena,source,identity,environment && environment->lines,
+                               environment ? environment->plan : NULL,out,error);
+    }
     const char *key = "compact-c/2";
     if (ce_native_document(atom)) {
         if (atom->len != 4 || atom->items[2]->kind != CE_ATOM_SYMBOL)
@@ -231,6 +243,13 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
     CeViewProfile profile = {0}; CeTree *tree; CeLazyLexer own = {0};
     Native native = {.grammar=g,.lexer=environment && environment->lexer ? environment->lexer : &own};
     if (head(atom,"unit")) native.imports = ce_alloc(arena,atom->len*sizeof(*native.imports));
+    /* Conditional branches print while expanding; their statements carry
+       #line directives of their own (lines, without a token map). */
+    CeLineMarks branch_marks = {0};
+    if (environment && environment->lines && identity) {
+        branch_marks = (CeLineMarks){.sorts=ce_native_line_sorts(g,arena),.source=source,.path=identity};
+        native.marks = &branch_marks;
+    }
     bool ok = true;
     if (head(atom,"unit")) for (size_t i = 1; i < atom->len && ok; ++i) {
         const CeAtom *use = atom->items[i];
@@ -284,13 +303,19 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
     }
     if (ok) {
         char *buffer = NULL; size_t length = 0; FILE *file = open_memstream(&buffer,&length);
+        CeSourceMap map = {0};
         if (!file) ok = ce_error(error,0,"cannot allocate native C output");
         else {
-            ok = ce_tree_print_open_shared(g,native.lexer,tree,g->entries[0],file,error);
+            if (environment && environment->lines && identity) {
+                CeLineMarks marks = {.sorts=ce_native_line_sorts(g,arena),.source=source,.path=identity,.map=&map};
+                ok = ce_tree_print_marked(g,native.lexer,tree,g->entries[0],&marks,file,error);
+            } else ok = ce_tree_print_open_shared(g,native.lexer,tree,g->entries[0],file,error);
             fputc('\n',file);
             if (ok) ok = finish(arena,file,&buffer,&length,&out->text,error);
             else { fclose(file); free(buffer); }
         }
+        if (ok) ce_native_map_copy(arena,&map,out);
+        ce_source_map_free(&map);
     }
     if (ok) {
         out->ndependencies = ce_macros_dependencies(native.macros);
@@ -304,9 +329,57 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
         for (size_t i = 0; i < native.nimports; ++i)
             for (size_t j = 0; j < native.imports[i].ndependencies; ++j)
                 out->dependencies[next++] = native.imports[i].dependencies[j];
+        out->needs_macro_inventory = out->ndependencies != 0;
     }
     ce_macros_free(native.macros); ce_view_free(&profile); ce_lazy_lexer_free(&own); return ok;
 }
+const unsigned char *ce_native_line_sorts(const CeGrammar *g, CeArena *arena) {
+    static const char *const levels[] = {"ExternalDeclaration","BlockItem","Statement","StructDeclaration"};
+    unsigned char *sorts = ce_alloc(arena,g->nsymbols);
+    memset(sorts,0,g->nsymbols);
+    for (size_t i = 0; i < g->nsymbols; ++i)
+        for (size_t k = 0; k < sizeof(levels)/sizeof(*levels); ++k)
+            if (g->symbols[i].kind == CE_NONTERMINAL && ce_is(g->symbols[i].name,levels[k])) sorts[i] = 1;
+    return sorts;
+}
+
+bool ce_native_map_copy(CeArena *arena, const CeSourceMap *map, CeNativeOutput *out) {
+    if (map->ntokens) {
+        CeMapToken *tokens = ce_alloc(arena,map->ntokens*sizeof(*tokens));
+        memcpy(tokens,map->tokens,map->ntokens*sizeof(*tokens));
+        out->tokens = tokens; out->ntokens = map->ntokens;
+    }
+    if (map->ndirectives) {
+        CeMapDirective *directives = ce_alloc(arena,map->ndirectives*sizeof(*directives));
+        memcpy(directives,map->directives,map->ndirectives*sizeof(*directives));
+        out->directives = directives; out->ndirectives = map->ndirectives;
+    }
+    return true;
+}
+
+static const char *ce_cstr_join(CeArena *arena, const char *a, const char *b) {
+    size_t n = strlen(a)+strlen(b)+1;
+    char *s = ce_alloc(arena,n); snprintf(s,n,"%s%s",a,b); return s;
+}
+
+const char *ce_generated_cache(CeArena *arena, const char *output) {
+    const char *cache = getenv("CESTA_BUILD_DIR");
+    if (cache && *cache) return cache;
+    if (!output) {
+        /* Nothing compiled from these files names their path. */
+        const char *xdg = getenv("XDG_CACHE_HOME"), *home = getenv("HOME");
+        if (xdg && *xdg) return ce_cstr_join(arena,xdg,"/cesta/generated");
+        if (home && *home) return ce_cstr_join(arena,home,"/.cache/cesta/generated");
+        return ".cesta-generated";
+    }
+    const char *slash = strrchr(output,'/');
+    if (!slash) return ".cesta-generated";
+    size_t length = (size_t)(slash-output);
+    char *directory = ce_alloc(arena,length+20);
+    memcpy(directory,output,length); strcpy(directory+length,"/.cesta-generated");
+    return directory;
+}
+
 bool ce_native_text(const CeGrammar *g, CeArena *arena, CeText source,
                      const char *presentation, CeText *out, CeError *error) {
     CeNativeOutput result = {0};
@@ -319,9 +392,8 @@ static int expand_command(int argc, char **argv, bool readable) {
     const char *plan_path = NULL; FILE *plan = NULL;
     char *plan_text = NULL; size_t plan_length = 0;
     const char *path = NULL, *output = NULL, *presentation = NULL; bool gnu = true;
-    const char *compiler = getenv("CESTA_CC"), *cache = getenv("CESTA_BUILD_DIR");
+    const char *compiler = getenv("CESTA_CC"), *cache = NULL;
     if (!compiler || !*compiler) compiler = "cc";
-    if (!cache || !*cache) cache = "build/cesta-generated";
     CeArena arena = {0}; CeGrammar grammar = {0}; CeError error = {{0},0}; CeText source = {0}, text;
     int result = 1; CeNativeOutput expanded = {0};
     char **flags = ce_alloc(&arena,((size_t)argc+5)*sizeof(*flags)); size_t nflags = 1;
@@ -347,6 +419,7 @@ static int expand_command(int argc, char **argv, bool readable) {
         else path = argv[i];
     }
     if (!path) { ce_error(&error,0,"expand requires an input file"); goto done; }
+    cache = ce_generated_cache(&arena,output);
     flags[0] = (char *)compiler;
     if (!ce_read_file(&arena,path,&source,&error) || !ce_builtin_language(&grammar,gnu,&error) ||
         (plan_path && !(plan = open_memstream(&plan_text,&plan_length)) &&

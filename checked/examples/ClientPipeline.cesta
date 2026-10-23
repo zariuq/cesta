@@ -1,0 +1,21 @@
+(cesta checked-c/1
+  (module client_pipeline)
+  (failure pipeline_failure)
+  (import "PackedWords.cesta" as Words)
+  (import "FormatBytes.cesta" as Format)
+  (import "ByteViews.cesta" as Bytes)
+
+  (fn decimal_word
+    (params (packet read) (destination write))
+    (returns usize)
+    (effects)
+    (body
+      (let value u64 (call Words_load_le64 packet))
+      (return (call Format_unsigned_decimal destination value))))
+
+  (fn prefix
+    (params (packet read) (count usize))
+    (returns read from packet)
+    (effects)
+    (body (return (call Bytes_prefix packet count))))
+)

@@ -7,6 +7,8 @@
 #include "operation.h"
 #include "table.h"
 #include "protocol.h"
+#include "project.h"
+#include "checked.h"
 
 #include <string.h>
 
@@ -28,6 +30,10 @@ int main(int argc, char **argv) {
     if (argc > 1 && (!strcmp(argv[1],"pack") || !strcmp(argv[1],"unpack"))) return ce_wire_command(argc,argv);
 #ifdef CE_BUILTIN_LANGUAGES
     if (argc > 1 && !strcmp(argv[1],"cc")) return ce_cc(argc-2,argv+2);
+    /* cesta build GRAMMAR.cf … is the grammar workbench; otherwise a project build. */
+    if (argc > 1 && !strcmp(argv[1],"build") &&
+        !(argc > 2 && strlen(argv[2]) > 3 && !strcmp(argv[2]+strlen(argv[2])-3,".cf")))
+        return ce_build_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"expand")) return ce_expand_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"check-macros")) return ce_macro_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"export-header")) return ce_export_command(argc,argv);
@@ -35,6 +41,7 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1],"layout")) return ce_layout_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"tables")) return ce_table_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"protocol")) return ce_protocol_command(argc,argv);
+    if (argc > 1 && !strcmp(argv[1],"checked")) return ce_checked_command(argc,argv);
     if (argc > 1 && !strcmp(argv[1],"operations")) return ce_operation_command(argc,argv);
     if (argc > 1 && (!strcmp(argv[1],"view") || !strcmp(argv[1],"convert") || !strcmp(argv[1],"export-view-rules")))
         return ce_view_command(argc,argv);
@@ -74,6 +81,7 @@ int main(int argc, char **argv) {
               "       cesta cc [--cc COMPILER] FLAGS SOURCES.csexp [OBJECTS/LIBRARIES]\n"
               "       cesta expand [--cc COMPILER] [--presentation native-c/1] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
               "       cesta check-macros MODULE THEORY\n"
+              "       cesta checked check|plan|header FILE.cesta [-o OUTPUT]\n"
               "       cesta export-header [--plan PLAN] EXPORT-SPEC -o OUTPUT.h\n"
               "       cesta export-c [--cc COMPILER] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
               "       cesta layout check|functions MODULE THEORY\n"
@@ -101,6 +109,7 @@ int main(int argc, char **argv) {
               "       cesta write GRAMMAR.cf SEXP [ENTRY [PROFILE]]\n"
               "       cesta check-module MODULE-SYNTAX.cf MODULE [PROFILE]\n"
               "       cesta module-grammar MODULE-SYNTAX.cf MODULE THEORY [PROFILE]\n"
+              "       cesta build [-C DIR] [-f cesta.project] [--cc COMPILER] [-j N] [-v] [--export-c DIR] [TARGET...]\n"
               "       cesta build|check-program|run GRAMMAR.cf SEXP [ENTRY PROFILE] -o OUTPUT [--cc COMPILER] [-- FLAGS]\n"
               "module commands accept --composition origin-coherent|origin-view\n", stderr);
         return 2;

@@ -27,14 +27,18 @@ int ce_execute(char *const *argv, CeError *error) {
 }
 
 int ce_execute_stdout(char *const *argv, CeArena *arena, CeText *out, CeError *error) {
+    return ce_execute_capture(argv,STDOUT_FILENO,arena,out,error);
+}
+
+int ce_execute_capture(char *const *argv, int stream, CeArena *arena, CeText *out, CeError *error) {
     int descriptors[2]; pid_t pid; posix_spawn_file_actions_t actions;
     *out = (CeText){NULL,0};
     if (pipe(descriptors)) { ce_error(error,0,"cannot capture compiler output: %s",strerror(errno)); return 2; }
     int status = posix_spawn_file_actions_init(&actions);
     if (!status) {
         status = posix_spawn_file_actions_addclose(&actions,descriptors[0]);
-        if (!status) status = posix_spawn_file_actions_adddup2(&actions,descriptors[1],STDOUT_FILENO);
-        if (!status && descriptors[1] != STDOUT_FILENO) status = posix_spawn_file_actions_addclose(&actions,descriptors[1]);
+        if (!status) status = posix_spawn_file_actions_adddup2(&actions,descriptors[1],stream);
+        if (!status && descriptors[1] != stream) status = posix_spawn_file_actions_addclose(&actions,descriptors[1]);
         if (!status) status = posix_spawnp(&pid,argv[0],&actions,NULL,argv,environ);
         posix_spawn_file_actions_destroy(&actions);
     }

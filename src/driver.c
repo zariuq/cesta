@@ -2,6 +2,7 @@
 #include "cesta.h"
 #include "pp.h"
 #include "native.h"
+#include "diagnose.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -35,7 +36,22 @@ typedef struct ResponseFrame {
     dev_t device; ino_t inode;
     const struct ResponseFrame *parent;
 } ResponseFrame;
-typedef struct { CeArena *arena; char **values; size_t len, capacity; } ResponseArgs;
+typedef struct {
+    CeArena *arena; char **values; size_t len, capacity;
+    CeText *files; size_t nfiles, file_capacity; bool collect_files;
+} ResponseArgs;
+static void response_file(ResponseArgs *out, const char *path) {
+    if (!out->collect_files) return;
+    for (size_t i = 0; i < out->nfiles; ++i)
+        if (ce_same_file((const char *)out->files[i].data,path)) return;
+    if (out->nfiles == out->file_capacity) {
+        size_t capacity = out->file_capacity ? out->file_capacity*2 : 8;
+        CeText *files = ce_alloc(out->arena,capacity*sizeof(*files));
+        if (out->nfiles) memcpy(files,out->files,out->nfiles*sizeof(*files));
+        out->files = files; out->file_capacity = capacity;
+    }
+    out->files[out->nfiles++] = ce_cstr(out->arena,path);
+}
 static void response_push(ResponseArgs *out, char *value) {
     if (out->len == out->capacity) {
         out->capacity = out->capacity ? out->capacity*2 : 32;
@@ -48,6 +64,7 @@ static bool response_white(unsigned c) { return c == ' ' || (c >= 9 && c <= 13);
    recursive @files. Ordinary C-only invocations still receive their original
    argv; expansion is used only when a compact input needs translation. */
 static bool response_expand(ResponseArgs *out, char *value, const ResponseFrame *parent, CeError *error) {
+    if (value[0] == '@' && value[1]) response_file(out,value+1);
     struct stat info;
     if (value[0] != '@' || !value[1] || stat(value+1,&info) || !S_ISREG(info.st_mode)) {
         response_push(out,value); return true;
@@ -79,6 +96,21 @@ static bool response_expand(ResponseArgs *out, char *value, const ResponseFrame 
     }
     free(buffer);
     return true;
+}
+
+bool ce_native_arguments(CeArena *arena, size_t argc, char **argv,
+                         CeNativeArguments *out, CeError *error) {
+    *out = (CeNativeArguments){0};
+    ResponseArgs expanded = {.arena=arena,.collect_files=true};
+    bool ok = true;
+    for (size_t i = 0; ok && i < argc; ++i) ok = response_expand(&expanded,argv[i],NULL,error);
+    if (ok) {
+        out->words = ce_alloc(arena,(expanded.len+1)*sizeof(*out->words));
+        if (expanded.len) memcpy(out->words,expanded.values,expanded.len*sizeof(*out->words));
+        out->nwords = expanded.len; out->files = expanded.files; out->nfiles = expanded.nfiles;
+    }
+    free(expanded.values);
+    return ok;
 }
 
 static bool compact_arguments(size_t n, char **args) {
@@ -246,7 +278,7 @@ static bool link_option(const char *a) {
         !strcmp(a,"-Xlinker") || !strcmp(a,"-shared") || !strcmp(a,"-pie") || !strcmp(a,"-static") ||
         !strcmp(a,"-rdynamic") || !strcmp(a,"-no-pie") || !strcmp(a,"-s") ||
         !strcmp(a,"-nostdlib") || !strcmp(a,"-nodefaultlibs") || !strcmp(a,"-nostartfiles") ||
-        !strcmp(a,"-static-libgcc");
+        !strcmp(a,"-static-libgcc") || !strcmp(a,"-static-pie");
 }
 
 /* The native compiler supplies active header identifiers and macro
@@ -256,9 +288,15 @@ static bool native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
                            const char *presentation, const char *identity,
                            size_t n, char **args, const char *cache, CeLazyLexer *lexer, bool readable,
                            FILE *plan, CeNativeOutput *out, CeError *error) {
-    CeNativeEnvironment probe = {.unguarded=true,.readable=readable,.lexer=lexer};
+    /* Compiled text maps back to the authored source; readable export does not. */
+    bool lines = !readable;
+    CeNativeEnvironment probe = {.unguarded=true,.readable=readable,.lines=lines,.lexer=lexer};
     if (!ce_native_text_at(g,arena,source,presentation,identity,&probe,out,error)) return false;
-    if (!out->ndependencies) return true;
+    if (!out->needs_macro_inventory) {
+        if (!plan) return true;
+        probe.plan = plan;
+        return ce_native_text_at(g,arena,source,presentation,identity,&probe,out,error);
+    }
     uint64_t path_hash = text_hash(UINT64_C(14695981039346656037),
         (CeText){(unsigned char *)identity,strlen(identity)});
     uint64_t content_hash = text_hash(UINT64_C(14695981039346656037),out->text);
@@ -295,7 +333,7 @@ static bool native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
     CeText inventory;
     if (ce_execute_stdout(command,arena,&inventory,error))
         return ce_error(error,0,"native compiler could not admit the macro name environment");
-    CeNativeEnvironment environment = {.identifiers=inventory,.readable=readable,.lexer=lexer,.plan=plan};
+    CeNativeEnvironment environment = {.identifiers=inventory,.readable=readable,.lines=lines,.lexer=lexer,.plan=plan};
     return ce_native_text_at(g,arena,source,presentation,identity,&environment,out,error);
 }
 
@@ -318,13 +356,162 @@ bool ce_native_export(const CeGrammar *g, CeArena *arena, CeText source,
     ce_lazy_lexer_free(&lexer); return ok;
 }
 
+static bool compiler_is_clang(CeArena *arena, const char *compiler) {
+    char *command[] = {(char *)compiler,"--version",NULL};
+    CeText text; CeError ignored = {{0},0};
+    if (ce_execute_stdout(command,arena,&text,&ignored) || !text.data) return false;
+    return strstr((const char *)text.data,"clang") != NULL;
+}
+
+static char *directory_of(CeArena *arena, const char *path) {
+    char *directory = ce_alloc(arena,strlen(path)+2); strcpy(directory,path);
+    char *slash = strrchr(directory,'/');
+    if (slash) { if (slash == directory) slash[1] = 0; else *slash = 0; }
+    else strcpy(directory,".");
+    return directory;
+}
+
+/* Each source compiles on its own, as the native compiler driver would compile
+   it: a generated unit with its authored directory first for quoted includes,
+   so mixed sources keep independent include contexts, and with the compiler's
+   diagnostics routed to authored lines and columns. Linking follows. */
+static int separate_compile(CeArena *arena, size_t n, char **args, const unsigned char *input,
+                            char **identities, const CeNativeOutput *native, const CeText *authored,
+                            const char *cache, const unsigned char *is_source, size_t sources,
+                            CeError *error) {
+    bool syntax = false, assembly = false, compile = false, deps = false, custom_target = false;
+    const char *output = NULL, *depfile = NULL;
+    for (size_t i = 1; i < n; ++i) {
+        const char *a = args[i];
+        if (!strcmp(a,"-S")) assembly = compile = true;
+        if (!strcmp(a,"-c")) compile = true;
+        if (!strcmp(a,"-fsyntax-only")) syntax = compile = true;
+        if (!strcmp(a,"-MD") || !strcmp(a,"-MMD")) deps = true;
+        if (!strncmp(a,"-MT",3) || !strncmp(a,"-MQ",3)) custom_target = true;
+        if (!strcmp(a,"-o") && i+1 < n) output = args[i+1];
+        else if (!strncmp(a,"-o",2) && a[2]) output = a+2;
+        if (!strcmp(a,"-MF") && i+1 < n) depfile = args[i+1];
+        else if (!strncmp(a,"-MF",3) && a[3]) depfile = a+3;
+        if (option_value(a) && i+1 < n) ++i;
+    }
+    if (compile && !syntax && output && sources > 1)
+        return ce_error(error,0,"one output cannot name multiple inputs"), 1;
+    bool clang = compiler_is_clang(arena,args[0]);
+    CeRouteStyle style = {.color=ce_route_color(STDERR_FILENO,n,args)};
+    char **objects = ce_alloc(arena,n*sizeof(*objects));
+    unsigned char *temporary = ce_alloc(arena,n); memset(temporary,0,n);
+    int failures = 0;
+    for (size_t at = 1; at < n; ++at) {
+        if (!is_source[at]) continue;
+        const char *original = identities[at] ? identities[at] : args[at];
+        char **cc = ce_alloc(arena,(n*2+24)*sizeof(*cc)); size_t k = 0;
+        cc[k++] = args[0];
+        bool dependency_stdout = deps && depfile && !strcmp(depfile,"-");
+        for (size_t i = 1; i < n; ++i) {
+            const char *a = args[i];
+            if (is_source[i]) continue;
+            if (!strcmp(a,"-c") || !strcmp(a,"-S") || !strcmp(a,"-E") || !strcmp(a,"-fsyntax-only")) continue;
+            if (!strncmp(a,"-o",2) || !strcmp(a,"-x")) { if (option_value(a) && i+1 < n) ++i; continue; }
+            if (link_option(a)) { if (option_value(a) && i+1 < n) ++i; continue; }
+            /* Dependencies for stdout pass through a file, to name authored sources. */
+            if (dependency_stdout && !strncmp(a,"-MF",3)) { if (!a[3] && i+1 < n) ++i; continue; }
+            if (a[0] != '-') continue; /* object and archive inputs belong to linking */
+            cc[k++] = args[i];
+            if (option_value(a) && i+1 < n) cc[k++] = args[++i];
+        }
+        char *dependency_file = NULL;
+        if (dependency_stdout) {
+            dependency_file = ce_alloc(arena,strlen(cache)+24);
+            sprintf(dependency_file,"%s/deps-XXXXXX",cache);
+            int fd = mkstemp(dependency_file);
+            if (fd < 0) { ce_error(error,0,"cannot create native dependency output"); failures = -1; break; }
+            close(fd); cc[k++] = "-MF"; cc[k++] = dependency_file;
+        }
+        const char *object = NULL;
+        if (!syntax) {
+            if (compile && output) object = output;
+            else if (compile) {
+                const char *stem = stem_path(arena,original,true);
+                char *path = ce_alloc(arena,strlen(stem)+3);
+                sprintf(path,"%s%s",stem,assembly ? ".s" : ".o"); object = path;
+            } else {
+                char *path = ce_alloc(arena,strlen(cache)+24);
+                sprintf(path,"%s/object-XXXXXX",cache);
+                int fd = mkstemp(path);
+                if (fd < 0) { ce_error(error,0,"cannot create an intermediate object"); failures = -1; break; }
+                close(fd); object = path; temporary[at] = 1;
+            }
+        }
+        objects[at] = (char *)object;
+        if (deps) {
+            const char *stem = compile && output && sources == 1 ? stem_path(arena,output,false) : stem_path(arena,original,true);
+            char *derived = ce_alloc(arena,strlen(stem)+5); sprintf(derived,"%s.d",stem);
+            if (!depfile) { cc[k++] = "-MF"; cc[k++] = derived; }
+            if (!custom_target) {
+                char *target = ce_alloc(arena,strlen(stem)+5); sprintf(target,"%s.o",stem);
+                cc[k++] = "-MT"; cc[k++] = (char *)(compile && output && sources == 1 ? output : target);
+            }
+        }
+        if (input[at]) {
+            cc[k++] = "-iquote"; cc[k++] = directory_of(arena,original);
+            cc[k++] = clang ? "-fno-caret-diagnostics" : "-fno-diagnostics-show-caret";
+            if (!clang) cc[k++] = "-fdiagnostics-column-unit=byte";
+            cc[k++] = "-fdiagnostics-color=never";
+        }
+        cc[k++] = syntax ? "-fsyntax-only" : assembly ? "-S" : "-c";
+        if (object) { cc[k++] = "-o"; cc[k++] = (char *)object; }
+        cc[k++] = "-x"; cc[k++] = "c"; cc[k++] = args[at]; cc[k] = NULL;
+        int status;
+        if (input[at]) {
+            CeText messages = {NULL,0};
+            status = ce_execute_capture(cc,STDERR_FILENO,arena,&messages,error);
+            CeRouteUnit unit = {.identity=original,.generated=args[at],.source=authored[at],.map=&native[at]};
+            if (messages.len) ce_route_diagnostics(messages,&unit,1,&style,stderr);
+            if (status == 2 && error->message[0]) { failures = -1; break; }
+        } else status = ce_execute(cc,error);
+        if (status) { if (dependency_file) unlink(dependency_file); ++failures; continue; }
+        if (deps) {
+            const char *stem = compile && output && sources == 1 ? stem_path(arena,output,false) : stem_path(arena,original,true);
+            char *derived = ce_alloc(arena,strlen(stem)+5); sprintf(derived,"%s.d",stem);
+            char *before[] = {args[at]}, *after[] = {(char *)original};
+            const char *written = dependency_file ? dependency_file : depfile ? depfile : derived;
+            bool ok = dependency_rewrite(arena,written,before,after,1,error) &&
+                      (!input[at] || module_dependencies_file(arena,written,&native[at],error));
+            if (ok && dependency_file) {
+                CeText text;
+                ok = ce_read_file(arena,dependency_file,&text,error) &&
+                     fwrite(text.data,1,text.len,stdout) == text.len;
+                if (!ok && !error->message[0]) ce_error(error,0,"cannot write native dependencies to stdout");
+            }
+            if (dependency_file) unlink(dependency_file);
+            if (!ok) { failures = -1; break; }
+        }
+    }
+    int result = failures < 0 ? 2 : failures ? 1 : 0;
+    if (!result && !compile) {
+        char **final = ce_alloc(arena,(n+2)*sizeof(*final)); size_t k = 0;
+        final[k++] = args[0];
+        for (size_t i = 1; i < n; ++i) {
+            const char *a = args[i];
+            if (is_source[i]) { final[k++] = objects[i]; continue; }
+            if (preprocessing_option(a) || dependency_option(a)) { if (option_value(a) && i+1 < n) ++i; continue; }
+            final[k++] = args[i];
+            if (option_value(a) && i+1 < n) final[k++] = args[++i];
+        }
+        final[k] = NULL;
+        result = ce_execute(final,error);
+    }
+    for (size_t i = 1; i < n; ++i) if (temporary[i]) unlink(objects[i]);
+    return result;
+}
+
 /* This bridge delegates preprocessing to the selected native compiler. Cesta
    neither reads nor interprets its expanded tokens. A per-input invocation
    preserves quoted-include context when inputs live in different directories. */
 static int native_authoring_compile(CeArena *arena, size_t n, char **args,
                                      unsigned char *input, char **identities,
-                                     const CeNativeOutput *native,
-                                     CeError *error) {
+                                     const CeNativeOutput *native, const CeText *authored,
+                                     const char *cache, CeError *error) {
     bool only = false, deps_only = false, deps = false, compile = false, custom_target = false;
     const char *output = NULL, *depfile = NULL; size_t sources = 0;
     unsigned char *is_source = ce_alloc(arena,n);
@@ -343,7 +530,7 @@ static int native_authoring_compile(CeArena *arena, size_t n, char **args,
         if (input[i] || (a[0] != '-' && suffix(a,".c"))) { is_source[i] = 1; ++sources; }
     }
     if (only && output && sources > 1) return ce_error(error,0,"one preprocessing output cannot name multiple inputs"), 1;
-    char **final = ce_alloc(arena,(n*5+8)*sizeof(*final)); size_t nf = 1; final[0] = args[0];
+    if (!only) return separate_compile(arena,n,args,input,identities,native,authored,cache,is_source,sources,error);
     const char *generated_base = NULL;
     for (size_t i = 1; i < n; ++i) if (input[i]) { generated_base = args[i]; break; }
     for (size_t at = 1; at < n; ++at) {
@@ -417,31 +604,11 @@ static int native_authoring_compile(CeArena *arena, size_t n, char **args,
                 fwrite(preprocessed.data,1,preprocessed.len,file) == preprocessed.len;
             if (output) ok = fclose(file) == 0 && ok;
             if (!ok) return ce_error(error,0,"cannot write preprocessing output"), 1;
-        } else {
-            uint64_t hash = text_hash(UINT64_C(14695981039346656037),preprocessed);
-            /* Ordinary C also uses this compiler-only bridge in a mixed link;
-               its intermediates are kept alongside a generated input. */
-            const char *base = args[at];
-            if (!input[at]) base = generated_base;
-            size_t cap = strlen(base)+32; char *path = ce_alloc(arena,cap);
-            snprintf(path,cap,"%s.%016llx.i",base,(unsigned long long)hash);
-            if (!publish_text(arena,path,preprocessed,error)) return 1;
-            args[at] = path;
         }
         if (dependency_stdout && fwrite(dependency_text.data,1,dependency_text.len,stdout) != dependency_text.len)
             return ce_error(error,0,"cannot write native dependencies to stdout"), 1;
     }
-    if (only) return 0;
-    for (size_t i = 1; i < n; ++i) {
-        const char *a = args[i];
-        if (is_source[i]) {
-            final[nf++] = args[i]; continue;
-        }
-        if (preprocessing_option(a) || dependency_option(a)) { if (option_value(a) && i+1 < n) ++i; continue; }
-        final[nf++] = args[i];
-        if (option_value(a) && i+1 < n) final[nf++] = args[++i];
-    }
-    final[nf] = NULL; return ce_execute(final,error);
+    return 0;
 }
 
 static bool source_dependency_row(CeArena *arena, FILE *out, const CePPResult *pp,
@@ -679,6 +846,18 @@ done:
     ce_catalog_free(&catalog); ce_grammar_free(&g); ce_arena_free(&arena); return result;
 }
 
+/* What the generated C should sit beside: the -o file, else the -MF file, else
+   the current directory when the command writes an object, assembly or program
+   there; NULL when it writes no file (-E, -M, -MM, -fsyntax-only). */
+static const char *generated_beside(const char *output, const char *dependency, int argc, char **argv) {
+    if (output) return output;
+    if (dependency && strcmp(dependency,"-")) return dependency;
+    for (int i = 0; i < argc; ++i)
+        if (!strcmp(argv[i],"-E") || !strcmp(argv[i],"-M") || !strcmp(argv[i],"-MM") ||
+            !strcmp(argv[i],"-fsyntax-only")) return NULL;
+    return "output";
+}
+
 int ce_cc(int argc, char **argv) {
     CeArena arena = {0}; CeGrammar g = {0}; CeError error = {{0},0};
     ResponseArgs expanded = {.arena=&arena}; CeError response_error = {{0},0}; bool responses_ok = true;
@@ -697,16 +876,17 @@ int ce_cc(int argc, char **argv) {
     const char *dependency_path = NULL, *output_path = NULL;
     bool dependencies = false, dependency_only = false, stop_before_link = false;
     if (!compiler || !*compiler) compiler = "cc";
-    char **arguments = ce_alloc(&arena,((size_t)argc+5)*sizeof(*arguments));
+    char **arguments = ce_alloc(&arena,((size_t)argc+12)*sizeof(*arguments));
     unsigned char *input = ce_alloc(&arena,(size_t)argc+5);
     CeText *contents = ce_alloc(&arena,((size_t)argc+5)*sizeof(*contents));
     CeNativeOutput *native_outputs = ce_alloc(&arena,((size_t)argc+5)*sizeof(*native_outputs));
     char **identities = ce_alloc(&arena,((size_t)argc+5)*sizeof(*identities));
+    CeText *authored = ce_alloc(&arena,((size_t)argc+5)*sizeof(*authored));
     size_t n = 1, sexprs = 0;
     bool gnu = true, standard = false, after_options = false;
     bool supported_standard = true;
     bool documents = false;
-    bool native_authoring = false;
+    bool native_authoring = false, ast_units = false;
     for (int i = 0; i < argc; ++i) {
         if (!after_options && !strcmp(argv[i],"--cc")) {
             if (++i == argc) { ce_error(&error,0,"--cc requires a compiler executable"); goto failed; }
@@ -746,8 +926,7 @@ int ce_cc(int argc, char **argv) {
     char **original_sources = ce_alloc(&arena,sexprs*sizeof(*original_sources)); size_t source_count = 0;
     if (sexprs) {
         if (!ce_builtin_language(&g,gnu,&error)) goto failed;
-        const char *cache = getenv("CESTA_BUILD_DIR");
-        if (!cache || !*cache) cache = "build/cesta-generated";
+        const char *cache = ce_generated_cache(&arena,generated_beside(output_path,dependency_path,argc,argv));
         char *directory = ce_alloc(&arena,strlen(cache)+1); strcpy(directory,cache);
         if (!directories(directory,&error)) goto failed;
         for (size_t i = 1; i < n; ++i) if (input[i]) {
@@ -755,10 +934,13 @@ int ce_cc(int argc, char **argv) {
             if (!ce_read_file(&arena,source_path,&source,&error)) {
                 fprintf(stderr,"%s: byte %zu: %s\n",source_path,error.offset,error.message); goto done_failure;
             }
-            identities[i] = (char *)source_path;
+            identities[i] = (char *)source_path; authored[i] = source;
+            CeRouteStyle style = {.color=ce_route_color(STDERR_FILENO,n,arguments)};
             bool lossless = source_document(source);
             CeAtom *atom = NULL;
-            if (!lossless && !ce_atom_read(&arena,source,&atom,&error)) goto failed;
+            if (!lossless && !ce_atom_read(&arena,source,&atom,&error)) {
+                ce_report_error(stderr,source_path,source,error.offset,error.message,&style); goto done_failure;
+            }
             if (atom && ce_wire_envelope(atom) && !ce_wire_unpack(&arena,atom,&atom,&error)) goto failed;
             bool native = (presentation && !strcmp(presentation,"native-c/1")) || (atom && ce_native_document(atom));
             if (!supported_standard && !native) { ce_error(&error,0,"Cesta's AST compiler profile supports -std=c11 or -std=gnu11"); goto failed; }
@@ -768,11 +950,11 @@ int ce_cc(int argc, char **argv) {
             } else if (native) {
                 native_authoring = true;
                 if (!ce_native_prepare(&g,&arena,source,presentation,source_path,n,arguments,cache,&native_outputs[i],&error)) {
-                    fprintf(stderr,"%s: byte %zu: %s\n",source_path,error.offset,error.message); goto done_failure;
+                    ce_report_error(stderr,source_path,source,error.offset,error.message,&style); goto done_failure;
                 }
                 contents[i] = native_outputs[i].text;
             } else if (!ce_builtin_decode_default(&g,source,presentation,input[i] == 2 ? "compact-c/2" : "ast/1",&arena,&tree,&error)) {
-                fprintf(stderr,"%s: byte %zu: %s\n",source_path,error.offset,error.message); goto done_failure;
+                ce_report_error(stderr,source_path,source,error.offset,error.message,&style); goto done_failure;
             }
             uint64_t hash = UINT64_C(14695981039346656037);
             for (const unsigned char *p = (const unsigned char *)source_path; *p; ++p) hash = (hash ^ *p)*UINT64_C(1099511628211);
@@ -791,9 +973,25 @@ int ce_cc(int argc, char **argv) {
                 if (!publish_text(&arena,path,contents[i],&error)) goto failed;
             } else snprintf(path,capacity,"%s/%.*s.c",parent,(int)base_len,base);
             if (!lossless && !native && !ce_tree_emit_checked(&g,tree,g.entries[0],path,&error)) {
-                fprintf(stderr,"%s: byte %zu: %s\n",source_path,error.offset,error.message); goto done_failure;
+                ce_report_error(stderr,source_path,source,error.offset,error.message,&style); goto done_failure;
             }
-            if (!lossless && !native && !ce_read_file(&arena,path,&contents[i],&error)) goto failed;
+            if (!lossless && !native) {
+                /* The checked print fixes the C; the compiler reads it with #line
+                   directives naming the authored source. */
+                char *buffer = NULL; size_t length = 0; FILE *file = open_memstream(&buffer,&length);
+                CeSourceMap map = {0}; CeLazyLexer lexer = {0};
+                CeLineMarks marks = {.sorts=ce_native_line_sorts(&g,&arena),.source=source,.path=source_path,.map=&map};
+                bool ok = file && ce_tree_print_marked(&g,&lexer,tree,g.entries[0],&marks,file,&error);
+                if (file) { fputc('\n',file); if (fclose(file)) ok = false; }
+                if (ok) {
+                    contents[i] = ce_text(&arena,(const unsigned char *)buffer,length);
+                    ce_native_map_copy(&arena,&map,&native_outputs[i]);
+                    ok = publish_text(&arena,path,contents[i],&error);
+                }
+                free(buffer); ce_source_map_free(&map); ce_lazy_lexer_free(&lexer);
+                if (!ok) goto failed;
+                ast_units = true;
+            }
             arguments[i] = path;
             generated_sources[source_count] = path; original_sources[source_count++] = (char *)source_path;
         }
@@ -812,7 +1010,8 @@ int ce_cc(int argc, char **argv) {
     }
     arguments[n] = NULL;
     if (native_authoring) {
-        int result = native_authoring_compile(&arena,n,arguments,input,identities,native_outputs,&error);
+        const char *cache = ce_generated_cache(&arena,generated_beside(output_path,dependency_path,argc,argv));
+        int result = native_authoring_compile(&arena,n,arguments,input,identities,native_outputs,authored,cache,&error);
         if (result && error.message[0]) fprintf(stderr,"cesta cc: %s\n",error.message);
         ce_grammar_free(&g); ce_arena_free(&arena); return result;
     }
@@ -824,6 +1023,22 @@ int ce_cc(int argc, char **argv) {
         if (capture) {
             result = ce_execute_stdout(arguments,&arena,&captured,&error);
             if (!dependency_write(&arena,captured,stdout,generated_sources,original_sources,source_count,&error)) result = 1;
+        } else if (ast_units) {
+            /* The compiler reads every unit in one command; its diagnostics are
+               routed to whichever unit they name. */
+            bool clang = compiler_is_clang(&arena,arguments[0]);
+            CeRouteStyle style = {.color=ce_route_color(STDERR_FILENO,n,arguments)};
+            arguments[n++] = clang ? "-fno-caret-diagnostics" : "-fno-diagnostics-show-caret";
+            if (!clang) arguments[n++] = "-fdiagnostics-column-unit=byte";
+            arguments[n++] = "-fdiagnostics-color=never";
+            arguments[n] = NULL;
+            CeRouteUnit *units = ce_alloc(&arena,n*sizeof(*units)); size_t nunits = 0;
+            for (size_t i = 1; i < n; ++i) if (native_outputs[i].ntokens && identities[i])
+                units[nunits++] = (CeRouteUnit){.identity=identities[i],.generated=arguments[i],
+                                                .source=authored[i],.map=&native_outputs[i]};
+            CeText messages = {NULL,0};
+            result = ce_execute_capture(arguments,STDERR_FILENO,&arena,&messages,&error);
+            if (messages.len) ce_route_diagnostics(messages,units,nunits,&style,stderr);
         } else result = ce_execute(arguments,&error);
         if (!result && dependencies && source_count) {
             if (depfile && strcmp(depfile,"-")) {

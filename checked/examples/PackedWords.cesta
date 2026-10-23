@@ -1,0 +1,42 @@
+(cesta checked-c/1
+  (module packed_words)
+  (failure packed_words_failure)
+
+  (fn load_le64
+    (params (bytes read))
+    (returns u64)
+    (effects)
+    (body
+      (require (le (len bytes) (usize 8)))
+      (var packed u64 (u64 0))
+      (for index bytes
+        (body
+          (set packed
+            (bit-or packed
+              (shl (as u64 (at bytes index)) (mul index (usize 8)))))))
+      (return packed)))
+
+  (fn store_le64
+    (params (bytes write) (packed u64))
+    (returns unit)
+    (effects)
+    (body
+      (require (le (len bytes) (usize 8)))
+      (for index bytes
+        (body
+          (put bytes index
+            (truncate u8 (shr packed (mul index (usize 8)))))))
+      (return)))
+
+  (fn display_metadata
+    (params (offset usize) (count usize) (color u32))
+    (returns u64)
+    (effects)
+    (body
+      (require (le offset (usize 255)))
+      (require (le count (usize 8)))
+      (return
+        (bit-or (as u64 offset)
+          (bit-or (shl (as u64 count) (usize 8))
+            (shl (as u64 color) (usize 32)))))))
+)

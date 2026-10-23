@@ -1,0 +1,73 @@
+(cesta checked-c/1
+  (module format_bytes)
+  (failure format_bytes_failure)
+
+  (fn copy
+    (params (destination write) (source read))
+    (returns usize)
+    (effects)
+    (body
+      (require (ge (len destination) (len source)))
+      (for index source
+        (body (put destination index (at source index))))
+      (return (len source))))
+
+  (fn unsigned_decimal
+    (params (destination write) (value u64))
+    (returns usize)
+    (effects)
+    (body
+      (array reversed 20)
+      (var remaining u64 value)
+      (var count usize (usize 0))
+      (while true
+        (body
+          (put reversed count (add (u8 48) (truncate u8 (rem remaining (u64 10)))))
+          (set count (add count (usize 1)))
+          (set remaining (div remaining (u64 10)))
+          (if (eq remaining (u64 0)) (then (break)) (else))))
+      (require (ge (len destination) count))
+      (var index usize (usize 0))
+      (while (lt index count)
+        (body
+          (put destination index
+            (at reversed (sub (sub count (usize 1)) index)))
+          (set index (add index (usize 1)))))
+      (return count)))
+
+  (fn unsigned_hex
+    (params (destination write) (value u64) (prefix bool))
+    (returns usize)
+    (effects)
+    (body
+      (array reversed 16)
+      (var remaining u64 value)
+      (var count usize (usize 0))
+      (while true
+        (body
+          (let digit u8 (truncate u8 (rem remaining (u64 16))))
+          (var character u8 (u8 0))
+          (if (lt digit (u8 10))
+            (then (set character (add (u8 48) digit)))
+            (else (set character (add (u8 87) digit))))
+          (put reversed count character)
+          (set count (add count (usize 1)))
+          (set remaining (div remaining (u64 16)))
+          (if (eq remaining (u64 0)) (then (break)) (else))))
+      (var start usize (usize 0))
+      (if prefix
+        (then
+          (require (ge (len destination) (usize 2)))
+          (put destination (usize 0) (u8 48))
+          (put destination (usize 1) (u8 120))
+          (set start (usize 2)))
+        (else))
+      (require (ge (len destination) (add start count)))
+      (var index usize (usize 0))
+      (while (lt index count)
+        (body
+          (put destination (add start index)
+            (at reversed (sub (sub count (usize 1)) index)))
+          (set index (add index (usize 1)))))
+      (return (add start count))))
+)

@@ -29,6 +29,7 @@ test-portable-readers test-workbench test-source test-export-counters-cetta test
 test-layout-admission test-layout-cetta test-layout-sanitizers test-layout-bridge test-layout-model
 test-operation-audit test-operation-model test-operations test-operation-proposal
 test-table-model test-table-admission test-operation-protocol test-protocol-model test-protocol-admission
+test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated
 """.split()
 
 

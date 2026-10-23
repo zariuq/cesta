@@ -315,12 +315,113 @@ typedef struct {
     bool lexer_attempted, lexer_ready;
     int parent;
     size_t argument;
+    /* Source mapping, when marks are given: the physical position written
+       next, the line a #line directive made it stand for (0 when none), and
+       the offset of the innermost tree with a source position. */
+    const CeLineMarks *marks;
+    size_t line, column, presumed, offset, *starts, nstarts;
+    bool failed;
 } CePrinter;
 
+static void put(CePrinter *out, const void *data, size_t length) {
+    fwrite(data,1,length,out->file);
+    const unsigned char *bytes = data;
+    for (size_t i = 0; i < length; ++i)
+        if (bytes[i] == '\n') { ++out->line; out->column = 1; if (out->presumed) ++out->presumed; }
+        else ++out->column;
+}
+
+static void put_char(CePrinter *out, int c) { unsigned char byte = (unsigned char)c; put(out,&byte,1); }
+
 static void print_break(CePrinter *out) {
-    if (!out->line_start) fputc('\n',out->file);
+    if (!out->line_start) put_char(out,'\n');
     out->line_start = true; out->pending_break = false; out->previous = 0;
     out->previous_text = (CeText){NULL,0};
+}
+
+static bool map_grow(void **items, size_t *capacity, size_t length, size_t size) {
+    if (length < *capacity) return true;
+    size_t next = *capacity ? *capacity*2 : 64;
+    void *grown = realloc(*items,next*size);
+    if (!grown) return false;
+    *items = grown; *capacity = next; return true;
+}
+
+size_t ce_source_line(CeText source, size_t offset, size_t *column) {
+    size_t line = 1, start = 0;
+    for (size_t i = 0; i < offset && i < source.len; ++i)
+        if (source.data[i] == '\n') { ++line; start = i+1; }
+    if (column) *column = offset-start+1;
+    return line;
+}
+
+static size_t printer_source_line(CePrinter *out, size_t offset) {
+    size_t low = 0, high = out->nstarts;
+    while (low+1 < high) {
+        size_t middle = (low+high)/2;
+        if (out->starts[middle] <= offset) low = middle; else high = middle;
+    }
+    return low+1;
+}
+
+static void emit_directive(CePrinter *out, size_t line);
+
+/* A directive starts a line at a statement-level tree, outside parentheses,
+   whenever the line the compiler would assume differs from the source line. */
+static void mark_line(CePrinter *out, const CeTree *t, int sort) {
+    const CeLineMarks *m = out->marks;
+    if (!m || !t->offset || t->offset >= m->source.len) return;
+    if (!(sort >= 0 && m->sorts[sort]) && !(t->symbol >= 0 && m->sorts[t->symbol])) return;
+    size_t floor = out->block_depth ? out->group_floors[out->block_depth] : 0;
+    if (out->group_depth != floor) return;
+    size_t line = printer_source_line(out,t->offset);
+    /* A statement-level tree starts a line; decide on the line it starts. */
+    print_break(out);
+    if (out->presumed != line) emit_directive(out,line);
+}
+
+/* The line of the parenthesis closing the form that starts at `offset`, so a
+   closing brace stands where its form closes. Strings, characters and
+   comments do not count. */
+static size_t closing_line(CePrinter *out, size_t offset) {
+    CeText source = out->marks->source;
+    if (offset >= source.len || source.data[offset] != '(') return printer_source_line(out,offset);
+    size_t depth = 0;
+    for (size_t i = offset; i < source.len; ++i) {
+        unsigned char c = source.data[i];
+        if (c == '"' || c == '\'') {
+            for (++i; i < source.len && source.data[i] != c; ++i) if (source.data[i] == '\\') ++i;
+        } else if (c == ';') {
+            while (i < source.len && source.data[i] != '\n') ++i;
+        } else if (c == '(') ++depth;
+        else if (c == ')' && !--depth) return printer_source_line(out,i);
+    }
+    return printer_source_line(out,offset);
+}
+
+static void emit_directive(CePrinter *out, size_t line) {
+    const CeLineMarks *m = out->marks;
+    char number[32]; int n = snprintf(number,sizeof number,"#line %zu \"",line);
+    put(out,number,(size_t)n);
+    for (const char *c = m->path; *c; ++c) {
+        if (*c == '"' || *c == '\\') put_char(out,'\\');
+        put_char(out,*c);
+    }
+    put(out,"\"\n",2);
+    out->presumed = line;
+    if (m->map) {
+        CeSourceMap *map = m->map;
+        if (!map_grow((void **)&map->directives,&map->directive_capacity,map->ndirectives,sizeof(*map->directives)))
+            out->failed = true;
+        else map->directives[map->ndirectives++] = (CeMapDirective){out->line,line};
+    }
+}
+
+static void map_token(CePrinter *out, size_t length) {
+    CeSourceMap *map = out->marks ? out->marks->map : NULL;
+    if (!map || !out->offset) return;
+    if (!map_grow((void **)&map->tokens,&map->token_capacity,map->ntokens,sizeof(*map->tokens))) { out->failed = true; return; }
+    map->tokens[map->ntokens++] = (CeMapToken){out->line,out->column,length,out->offset};
 }
 
 const CeDFA *ce_lazy_lexer(CeLazyLexer *lexer, const CeGrammar *g) {
@@ -368,6 +469,10 @@ static void print_token(const CeGrammar *g, CeText text, int symbol, bool line, 
     if (flags & CE_LAYOUT_BLOCK_CLOSE) {
         if (out->block_depth) --out->block_depth;
         print_break(out);
+        if (out->marks && out->offset) {
+            size_t line = closing_line(out,out->offset);
+            if (out->presumed != line) emit_directive(out,line);
+        }
     }
     if (out->pending_break) {
         if (flags & (CE_LAYOUT_JOIN | CE_LAYOUT_LEFT | CE_LAYOUT_GROUP_CLOSE)) out->pending_break = false;
@@ -375,14 +480,15 @@ static void print_token(const CeGrammar *g, CeText text, int symbol, bool line, 
     }
     if (out->line_start) {
         size_t width = g->indentation ? g->indentation : 2;
-        for (size_t i = 0; i < out->block_depth*width; ++i) fputc(' ',out->file);
+        for (size_t i = 0; i < out->block_depth*width; ++i) put_char(out,' ');
         out->line_start = false;
     } else if (out->attach && adjacent_tokens(g,out,text)) {
     } else if (((flags & CE_LAYOUT_BLOCK_OPEN) && !(out->previous & CE_LAYOUT_GROUP_OPEN)) ||
         ((flags & CE_LAYOUT_GROUP_OPEN) && (out->previous & CE_LAYOUT_SPACED) && !(out->previous & CE_LAYOUT_RIGHT)) ||
         (!(flags & CE_LAYOUT_LEFT) && !(out->previous & CE_LAYOUT_RIGHT)) ||
-        !adjacent_tokens(g,out,text)) fputc(' ',out->file);
-    fwrite(text.data,1,text.len,out->file); out->previous = flags; out->previous_text = text;
+        !adjacent_tokens(g,out,text)) put_char(out,' ');
+    map_token(out,text.len);
+    put(out,text.data,text.len); out->previous = flags; out->previous_text = text;
     if (flags & CE_LAYOUT_GROUP_OPEN) ++out->group_depth;
     if ((flags & CE_LAYOUT_GROUP_CLOSE) && out->group_depth) --out->group_depth;
     if (flags & CE_LAYOUT_BLOCK_OPEN) {
@@ -544,14 +650,31 @@ static bool render_body(const CeGrammar *g, const CeTree *t, int sort, CePrinter
     return ce_error(error,t->offset,"constructor cannot be printed in required category");
 }
 
+static bool render_tree(const CeGrammar *g, const CeTree *t, int sort, CePrinter *out,
+                        CeError *error, unsigned char *active, size_t depth);
+
 static bool render(const CeGrammar *g, const CeTree *t, int sort, CePrinter *out,
                    CeError *error, unsigned char *active, size_t depth) {
+    size_t enclosing = out->offset;
+    if (t->offset) out->offset = t->offset;
+    mark_line(out,t,sort);
+    bool ok = render_tree(g,t,sort,out,error,active,depth);
+    out->offset = enclosing;
+    return ok;
+}
+
+static bool render_tree(const CeGrammar *g, const CeTree *t, int sort, CePrinter *out,
+                        CeError *error, unsigned char *active, size_t depth) {
     if (t->production == CE_TREE_SOURCE) {
         if (!out->open_source) return ce_error(error,t->offset,"open C source requires the native authoring printer");
         if (!same_sort(g,sort,t->symbol)) return ce_error(error,t->offset,"open C source has the wrong grammar sort");
         print_break(out);
-        fwrite(t->spelling.data,1,t->spelling.len,out->file);
-        if (t->spelling.len && t->spelling.data[t->spelling.len-1] != '\n') fputc('\n',out->file);
+        map_token(out,0);
+        put(out,t->spelling.data,t->spelling.len);
+        if (t->spelling.len && t->spelling.data[t->spelling.len-1] != '\n') put_char(out,'\n');
+        /* Source text may carry its own directives or lines the authored text
+           does not have; the next statement-level tree states its line again. */
+        out->presumed = 0;
         return !ferror(out->file) || ce_error(error,t->offset,"cannot print open C source");
     }
     for (size_t i = 0; i < g->ngroupings; ++i) if (g->groupings[i].production == t->production) {
@@ -575,36 +698,54 @@ static bool render(const CeGrammar *g, const CeTree *t, int sort, CePrinter *out
 /* A borrowed lexer must have been prepared for g. Without one, a shared or
    private lexer is prepared on the first token-boundary question. */
 static bool print_with(const CeGrammar *g, const CeDFA *lexer, CeLazyLexer *shared,
-                       const CeTree *tree, int sort, bool open_source, FILE *file, CeError *error) {
+                       const CeTree *tree, int sort, bool open_source, const CeLineMarks *marks,
+                       FILE *file, CeError *error) {
     unsigned char *active = calloc(g->nsymbols,1);
     if (!active) { fputs("cesta: out of memory\n",stderr); exit(2); }
     CePrinter out = {.file=file,.line_start=true,.parent=-1,.borrowed=lexer,.shared=shared,
-                     .open_source=open_source};
+                     .open_source=open_source,.marks=marks,.line=1,.column=1};
+    if (marks) {
+        out.starts = malloc((marks->source.len+1)*sizeof(*out.starts));
+        if (!out.starts) { fputs("cesta: out of memory\n",stderr); exit(2); }
+        out.starts[out.nstarts++] = 0;
+        for (size_t i = 0; i < marks->source.len; ++i)
+            if (marks->source.data[i] == '\n') out.starts[out.nstarts++] = i+1;
+    }
     bool ok = render(g,tree,sort,&out,error,active,0);
-    free(out.group_floors); ce_dfa_free(&out.lexer); free(active); return ok;
+    if (ok && out.failed) ok = ce_error(error,0,"cannot record the source map");
+    free(out.starts); free(out.group_floors); ce_dfa_free(&out.lexer); free(active); return ok;
 }
 
 bool ce_tree_print_prepared(const CeGrammar *g, const CeDFA *lexer, const CeTree *tree,
                             int sort, FILE *file, CeError *error) {
-    return print_with(g,lexer,NULL,tree,sort,false,file,error);
+    return print_with(g,lexer,NULL,tree,sort,false,NULL,file,error);
 }
 
 bool ce_tree_print(const CeGrammar *g, const CeTree *tree, int sort, FILE *file, CeError *error) {
-    return print_with(g,NULL,NULL,tree,sort,false,file,error);
+    return print_with(g,NULL,NULL,tree,sort,false,NULL,file,error);
 }
 
 bool ce_tree_print_shared(const CeGrammar *g, CeLazyLexer *lexer, const CeTree *tree,
                           int sort, FILE *file, CeError *error) {
-    return print_with(g,NULL,lexer,tree,sort,false,file,error);
+    return print_with(g,NULL,lexer,tree,sort,false,NULL,file,error);
 }
 
 bool ce_tree_print_open_shared(const CeGrammar *g, CeLazyLexer *lexer, const CeTree *tree,
                                int sort, FILE *file, CeError *error) {
-    return print_with(g,NULL,lexer,tree,sort,true,file,error);
+    return print_with(g,NULL,lexer,tree,sort,true,NULL,file,error);
+}
+
+bool ce_tree_print_marked(const CeGrammar *g, CeLazyLexer *lexer, const CeTree *tree, int sort,
+                          const CeLineMarks *marks, FILE *file, CeError *error) {
+    return print_with(g,NULL,lexer,tree,sort,true,marks,file,error);
+}
+
+void ce_source_map_free(CeSourceMap *map) {
+    free(map->tokens); free(map->directives); *map = (CeSourceMap){0};
 }
 
 bool ce_tree_print_open(const CeGrammar *g, const CeTree *tree, int sort, FILE *file, CeError *error) {
-    return print_with(g,NULL,NULL,tree,sort,true,file,error);
+    return print_with(g,NULL,NULL,tree,sort,true,NULL,file,error);
 }
 
 bool ce_token_value(CeArena *arena, CeText spelling, CeText *out, CeError *error) {

@@ -1,0 +1,45 @@
+(cesta checked-c/1
+  (module owners)
+  (failure owners_failure)
+  (allocator owners_allocate owners_release)
+
+  (fn identity
+    (params (bytes own))
+    (returns own)
+    (effects)
+    (body (return bytes)))
+
+  (fn consume
+    (params (bytes own))
+    (returns usize)
+    (effects heap)
+    (body (return (len bytes))))
+
+  (fn allocation_sum
+    (params (count usize))
+    (returns u64)
+    (effects heap)
+    (body
+      (allocate bytes count
+        (then
+          (if (gt (len bytes) (usize 0))
+            (then
+              (put bytes (usize 0) (u8 7))
+              (borrow view read bytes)
+              (let value u64 (as u64 (at view (usize 0))))
+              (end view)
+              (return value))
+            (else (return (u64 0)))))
+        (else (return (u64 0))))))
+
+  (fn allocation_transfer
+    (params (count usize))
+    (returns usize)
+    (effects heap)
+    (body
+      (allocate bytes count
+        (then
+          (let moved own (call identity bytes))
+          (return (call consume moved)))
+        (else (return (usize 0))))))
+)

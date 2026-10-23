@@ -1,0 +1,12 @@
+(cesta checked-c/1
+  (module refused)
+  (failure refused_failure)
+  (fn overlapping
+    (params)
+    (returns unit)
+    (effects)
+    (body
+      (array bytes 8)
+      (borrow first write bytes)
+      (borrow second write bytes)
+      (return))))

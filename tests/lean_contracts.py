@@ -80,6 +80,13 @@ PROTOCOL_MODULES = [
     "Mettapedia.GSLT.LanguageDef.ExecutableProtocolInstrumentationCorrectness",
     "Mettapedia.GSLT.LanguageDef.ExecutableProtocolInstrumentationControls",
 ]
+CHECKED_MODULES = [
+    "Mettapedia.GSLT.LanguageDef.CheckedBytes",
+    "Mettapedia.GSLT.LanguageDef.CheckedBytePlans",
+    "Mettapedia.GSLT.LanguageDef.CheckedByteSafety",
+    "Mettapedia.GSLT.LanguageDef.CheckedByteModules",
+    "Mettapedia.GSLT.LanguageDef.CheckedByteControls",
+]
 LAYOUT_BRIDGE_MODULES = [
     "Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayout",
 ]
@@ -141,6 +148,8 @@ def main():
                         help="check just the shared declared-table models")
     parser.add_argument("--protocols-only",action="store_true",
                         help="check executable protocol lowering, safety and composition")
+    parser.add_argument("--checked-only",action="store_true",
+                        help="check byte-buffer permissions, control-flow laws and examples")
     parser.add_argument("--output",type=Path,default=ROOT / "build/lean-contracts")
     args = parser.parse_args()
     project,output = args.lean_project.resolve(),args.output.resolve()
@@ -153,7 +162,7 @@ def main():
     files,theorems,imports = [],[],[]
     started = time.monotonic()
     groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES, EXPORT_MODULES, LAYOUT_MODULES,
-                                                                  OPERATION_MODULES, TABLE_MODULES, PROTOCOL_MODULES]
+                                                                  OPERATION_MODULES, TABLE_MODULES, PROTOCOL_MODULES, CHECKED_MODULES]
     if args.layouts_only:
         groups = [LAYOUT_MODULES]
     if args.operations_only:
@@ -162,6 +171,8 @@ def main():
         groups = [TABLE_MODULES]
     if args.protocols_only:
         groups = [PROTOCOL_MODULES]
+    if args.checked_only:
+        groups = [CHECKED_MODULES]
     if args.layout_bridge:
         groups.append(LAYOUT_BRIDGE_MODULES)
     for group in groups:

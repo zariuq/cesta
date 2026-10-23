@@ -1,0 +1,61 @@
+(cesta checked-c/1
+  (module byte_views)
+  (failure byte_views_failure)
+
+  (fn checksum
+    (params (bytes read))
+    (returns u64)
+    (effects)
+    (body
+      (var total u64 (u64 0))
+      (for index bytes
+        (body
+          (set total (wrap-add total (as u64 (at bytes index))))))
+      (return total)))
+
+  (fn fill
+    (params (bytes write) (value u8))
+    (returns unit)
+    (effects)
+    (body
+      (for index bytes
+        (body (put bytes index value)))
+      (return)))
+
+  (fn prefix
+    (params (bytes read) (count usize))
+    (returns read from bytes)
+    (effects)
+    (body
+      (slice first read bytes (usize 0) count)
+      (return first)))
+
+  (fn local_checksum
+    (params)
+    (returns u64)
+    (effects)
+    (body
+      (array bytes 8)
+      (call fill bytes (u8 65))
+      (borrow first read bytes)
+      (copy second first)
+      (let before u64 (call checksum second))
+      (end first)
+      (end second)
+      (move moved bytes)
+      (let after u64 (call checksum moved))
+      (return (wrap-add before after))))
+
+  (fn reborrow
+    (params)
+    (returns u8)
+    (effects)
+    (body
+      (array bytes 2)
+      (borrow exclusive write bytes)
+      (borrow shared read exclusive)
+      (let value u8 (at shared (usize 0)))
+      (end shared)
+      (put exclusive (usize 0) (add value (u8 7)))
+      (end exclusive)
+      (return (at bytes (usize 0))))))
