@@ -28,8 +28,8 @@ build/CPPGNU.cf: build/cesta-bootstrap grammar/CPreprocessing.module grammar/GNU
 build/language-data.c: build/embed build/C11.cf build/CGNU.cf build/CPPGNU.cf grammar/TheoryModule.cf grammar/C11.profile grammar/CGNU.profile grammar/CGNUC11.profile grammar/CClang.profile grammar/CClangC11.profile presentations/CompactC.module presentations/CompactC2.module presentations/CMeraStyle.module
 	./build/embed C11Grammar build/C11.cf CGNUGrammar build/CGNU.cf CPPGNUGrammar build/CPPGNU.cf TheoryModuleSyntax grammar/TheoryModule.cf C11Profile grammar/C11.profile CGNUProfile grammar/CGNU.profile CGNUC11Profile grammar/CGNUC11.profile CClangProfile grammar/CClang.profile CClangC11Profile grammar/CClangC11.profile CompactCModule presentations/CompactC.module CompactC2Module presentations/CompactC2.module CMeraStyleModule presentations/CMeraStyle.module > $@
 
-build/cesta: $(SOURCES) src/cesta.h src/sema.h src/pp.h src/native.h src/macro.h src/export.h src/layout.h src/operation.h src/table.h src/protocol.h src/diagnose.h src/project.h src/checked.h src/driver.c src/diagnose.c src/project.c src/checked.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/diagnose.c src/project.c src/checked.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c -o $@
+build/cesta: $(SOURCES) src/cesta.h src/sema.h src/pp.h src/native.h src/macro.h src/export.h src/layout.h src/operation.h src/table.h src/protocol.h src/diagnose.h src/project.h src/checked.h src/ownership.h src/ownership.c src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c -o $@
 
 build/test-foundation: tests/foundation.c $(LIBSOURCES) src/cesta.h
 	mkdir -p build
@@ -419,9 +419,15 @@ test-table-admission: build/cesta test-table-model
 test-operation-protocol: build/cesta test-operation-model
 	python3 -B tests/operation_protocol.py $(OPERATION_PROTOCOL_TEST_FLAGS)
 
-.PHONY: test-protocols test-protocol-model test-protocol-admission
+.PHONY: test-protocols test-protocol-model test-protocol-admission test-protocol-loops test-protocol-loop-admission
 test-protocols: build/cesta
 	python3 -B tests/protocols.py
+
+test-protocol-loops: build/cesta
+	python3 -B tests/protocol_loops.py
+
+test-protocol-loop-admission: build/cesta test-protocol-model
+	python3 -B tests/protocol_loop_admission.py $(PROTOCOL_ADMISSION_TEST_FLAGS)
 
 test-protocol-model: build/cesta
 	python3 -B tests/lean_contracts.py --protocols-only $(LEAN_TEST_FLAGS)
@@ -460,12 +466,12 @@ test-tiers:
 # native compilers; qualify runs every gate, including corpora, compiler
 # matrices and actual-data Lean admissions. test_tiers.py keeps every
 # previously required gate inside qualify.
-CHECK_GATES := test-tiers test-foundation test-source-core test-pp-core test-qualification-controls \
+CHECK_GATES := test-tiers test-foundation test-source-core test-pp-core test-qualification-controls test-ownership-smoke \
 	test-reference test-wire test-literal-bytes test-coverage test-presentations test-presentation-coverage \
 	test-unicode-names test-source-driver test-driver test-macro-prescan test-macro-definition-ports \
-	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges test-tables test-protocols \
+	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges test-tables test-protocols test-protocol-loops \
 	test-checked-core test-checked-libraries
-TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions \
+TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-ownership-core test-ownership-runtime \
 	test-checked-imports \
 	test-native-authoring test-one-language test-project-build test-macro-engine test-macro-native-names test-macro-types test-macro-narrowing \
 	test-macro-worklists test-macro-sizes test-macro-probes test-provenance-core test-c-printer test-examples \
@@ -478,7 +484,24 @@ QUALIFY_GATES := $(TEST_GATES) test-corpora test-c11parser test-lean test-macro-
 	test-source test-export-counters-cetta test-export-admission test-layout-admission test-layout-cetta \
 	test-layout-sanitizers test-layout-bridge test-layout-model test-operation-audit test-operation-model \
 	test-operations test-operation-proposal test-table-model test-table-admission test-operation-protocol \
-	test-protocol-model test-protocol-admission test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated
+	test-protocol-model test-protocol-admission test-protocol-loop-admission test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated \
+	test-ownership-model test-ownership-admission
+
+.PHONY: test-ownership-smoke test-ownership-core test-ownership-runtime test-ownership-model test-ownership-admission
+test-ownership-smoke: build/cesta
+	python3 -B tests/ownership_core.py --quick --output build/ownership-smoke.json
+
+test-ownership-core: build/cesta
+	python3 -B tests/ownership_core.py
+
+test-ownership-runtime: build/cesta
+	python3 -B tests/ownership_runtime.py
+
+test-ownership-model: build/cesta
+	python3 -B tests/lean_contracts.py --ownership-only --output build/ownership-model
+
+test-ownership-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_admission.py
 
 .PHONY: check test qualify
 check: $(CHECK_GATES)

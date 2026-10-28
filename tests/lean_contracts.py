@@ -79,6 +79,8 @@ PROTOCOL_MODULES = [
     "Mettapedia.GSLT.LanguageDef.ExecutableProtocolInstrumentation",
     "Mettapedia.GSLT.LanguageDef.ExecutableProtocolInstrumentationCorrectness",
     "Mettapedia.GSLT.LanguageDef.ExecutableProtocolInstrumentationControls",
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocolLoops",
+    "Mettapedia.GSLT.LanguageDef.ExecutableProtocolLoopChecks",
 ]
 CHECKED_MODULES = [
     "Mettapedia.GSLT.LanguageDef.CheckedBytes",
@@ -86,6 +88,14 @@ CHECKED_MODULES = [
     "Mettapedia.GSLT.LanguageDef.CheckedByteSafety",
     "Mettapedia.GSLT.LanguageDef.CheckedByteModules",
     "Mettapedia.GSLT.LanguageDef.CheckedByteControls",
+]
+OWNERSHIP_MODULES = [
+    "Mettapedia.Machines.CMemory.SpatialLoans",
+    "Mettapedia.Machines.CMemory.Borrowing",
+    "Mettapedia.Machines.CMemory.PermissionFlow",
+    "Mettapedia.Languages.C11.BorrowingLayouts",
+    "Mettapedia.GSLT.LanguageDef.OwnershipPlans",
+    "Mettapedia.GSLT.LanguageDef.OwnershipAdmission",
 ]
 LAYOUT_BRIDGE_MODULES = [
     "Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayout",
@@ -150,6 +160,8 @@ def main():
                         help="check executable protocol lowering, safety and composition")
     parser.add_argument("--checked-only",action="store_true",
                         help="check byte-buffer permissions, control-flow laws and examples")
+    parser.add_argument("--ownership-only",action="store_true",
+                        help="check allocation-range ownership, permission flow and C layout bridges")
     parser.add_argument("--output",type=Path,default=ROOT / "build/lean-contracts")
     args = parser.parse_args()
     project,output = args.lean_project.resolve(),args.output.resolve()
@@ -162,7 +174,7 @@ def main():
     files,theorems,imports = [],[],[]
     started = time.monotonic()
     groups = [(module,module+"Controls") for module in MODULES] + [PRESENTATION_MODULES, TYPE_MODULES, EXPORT_MODULES, LAYOUT_MODULES,
-                                                                  OPERATION_MODULES, TABLE_MODULES, PROTOCOL_MODULES, CHECKED_MODULES]
+                                                                  OPERATION_MODULES, TABLE_MODULES, PROTOCOL_MODULES, CHECKED_MODULES, OWNERSHIP_MODULES]
     if args.layouts_only:
         groups = [LAYOUT_MODULES]
     if args.operations_only:
@@ -173,6 +185,8 @@ def main():
         groups = [PROTOCOL_MODULES]
     if args.checked_only:
         groups = [CHECKED_MODULES]
+    if args.ownership_only:
+        groups = [OWNERSHIP_MODULES]
     if args.layout_bridge:
         groups.append(LAYOUT_BRIDGE_MODULES)
     for group in groups:

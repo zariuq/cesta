@@ -1,0 +1,22 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (include <stddef.h>)
+    (ownership
+      (check-all)
+      (allocator heap malloc free
+        (obligation "Fresh allocation of the requested extent; free releases it once and accepts null."))
+      (function consume (owns 0 heap)))
+    (native "void *malloc(size_t); void free(void *);\n")
+    (typedef (struct Pair (int left) (int right)) Pair)
+    (fn (static int) consume ((Pair (* pair)))
+      (var int sum (+ (-> pair left) (-> pair right)))
+      (call free pair)
+      (return sum))
+    (fn int main (void)
+      (var Pair (* pair) (cast (Pair *) (call malloc (sizeof type Pair))))
+      (if (! pair)
+        (block (call free pair) (return 0)))
+      (= (-> pair left) 19)
+      (= (-> pair right) 23)
+      (var int sum (call consume pair))
+      (return (?: (== sum 42) 0 1)))))

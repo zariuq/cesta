@@ -1,0 +1,155 @@
+OWNERSHIP OVER NATIVE C
+
+An unconditional (ownership ...) form inside a native-c/1 unit makes its
+preprocessed function bodies subject to ownership checking. The compiler and
+readable export both run the check. Includes and active preprocessor branches
+are read with the configured compiler flags, then bound and elaborated by the
+existing C type layer. A #line directive cannot hide an unchecked definition.
+
+Example:
+
+  (cesta native-c/1 compact-c/2
+    (unit
+      (ownership
+        (check-all)
+        (function find (returns-borrow 0 entries nullable))
+        (function text (stores 1 static))
+        (foreign report (variadic-read)
+          (obligation "Reads its arguments during this call; retains none.")))
+      ... C declarations and function bodies ...))
+
+The representation and calling convention remain C's. Ownership bookkeeping
+is erased. Bounds or arithmetic checks from checked-c/1 are a separate feature.
+The current native ownership profile uses x86_64 SysV sizes and alignment;
+generated C carries a static assertion for that profile. The mathematical
+range and permission laws do not depend on a particular word size or ABI.
+
+BORROWING
+
+Pointer parameters borrow a complete pointee for the call. A pointer to const
+borrows for reading; other pointers borrow exclusively. Passing two overlapping
+exclusive arguments, or a shared and exclusive argument that overlap, fails.
+Every call needs a checked body or an explicit foreign contract.
+
+A local pointer creates a lexical loan. A reborrow suspends its parent's
+overlapping range. Distinct record fields can be used independently. A parent
+becomes available again when its child scope ends. Shared loans can coexist.
+
+Borrowed returns name an input index, optional member path and nullability:
+
+  (function field (returns-borrow 0 member nested_member))
+  (function find (returns-borrow 0 entries nullable))
+  (function label (returns-static))
+  (function maybe_label (returns-static nullable))
+
+Input indices start at zero. The origin is the original input, so reassigning
+a parameter cannot turn a local pointer into a valid return. A member path
+narrows the caller's loan to that subobject. An unknown array index borrows
+the whole inline array conservatively. Constant subscripts are range checked.
+Dynamic subscripting through a raw pointer needs a checked bounded view.
+
+Nullable references require a non-null branch before access. Supported guards
+include p, !p, p != 0, p == 0 and short-circuit combinations. Both branches
+remain subject to ownership checking even when one test is a scalar constant.
+
+OUTPUT POINTERS
+
+  (function text (stores 1 static))
+  (function select (stores 2 0))
+  (foreign preserve_slot (preserves 0)
+    (obligation "Preserves the stored pointer and its lifetime."))
+
+The destination is a pointer-to-pointer parameter. Its result borrows static
+data or the named input. Every returning or falling-through path must establish
+the declared lifetime. A stored loan also constrains the callee while it is
+live. At a call, the destination is an initialized local pointer slot.
+Native mutable pointer-to-pointer arguments need either stores or preserves;
+the checker never assumes that an arbitrary native write preserves a borrow.
+
+ALLOCATION, MOVE AND RELEASE
+
+  (allocator heap malloc free
+    (obligation "Allocates fresh storage of the requested extent; free consumes
+                 its allocation once and accepts null."))
+  (function consume (owns 0 heap))
+  (function make (returns-own heap nullable))
+
+The family is a nominal allocation/release identity. A local mutable pointer
+initialized from an owned result becomes its owner. Initializing another
+mutable pointer from that owner moves it; later use of the old binding fails.
+A pointer to const borrows instead. &*owner explicitly reborrows for writing.
+
+An owner must be released by its family's release interface or transferred to
+an owned parameter/result. A live loan prevents moving or releasing its root.
+An ordinary borrow has no release authority, even if it permits writes.
+Overwriting or leaving an owner behind fails at compile time. Destruction is
+explicit C code; the checker does not silently insert a deallocator.
+
+This native profile admits constant allocation extents, including sizeof of
+a complete record. Dynamic byte storage remains in checked-c/1 modules; their
+interaction with native ownership currently needs a contracted native boundary.
+A failed nullable allocation must also follow a
+valid cleanup path; release(null) is part of the allocator contract above.
+
+GLOBAL STATE
+
+  (global state serve)
+
+The global must have internal linkage. Only its declared owner function can
+access it directly; helpers receive loans. A recursive call to the owner
+cannot overlap a live loan of its global. Immutable scalar, array and record
+constants can be read without a mutable owner. Mutable global references
+cannot be returned as static references.
+
+This is a sequential module discipline. Concurrency, interrupts and foreign
+reentry require their own resource contracts; the declaration is not a mutex
+or a proof of whole-program race freedom.
+
+REFUSALS AND THE IMPLEMENTATION BOUNDARY
+
+The current surface admits inline value records and arrays and references to
+them. Reference-bearing aggregate fields still require a future field-lifetime
+interface. Unions, bit-fields, pointer reinterpretation, integer-manufactured
+pointers, indirect calls, unsupported control transfers and uncontracted native
+calls are refused inside the checked region. Volatile and atomic memory are
+accessed through named native resource contracts.
+
+Ordinary C scalar computations, initialization of all individual subfields,
+and all dynamic array bounds are not proved by this pass. It does not make
+arbitrary C free of undefined behavior. Checked byte functions provide runtime
+bounds and arithmetic checks where those are needed. Source projection, ABI
+layout calculation, printing and compilation remain tested boundaries.
+
+PROOF RECORDS
+
+  cesta export-c source.cesta --std=c11 --plan source.plan -o source.c
+
+The ownership record includes actual allocation ranges, loan creation and end,
+accesses, branches, loops, move/release/transfer events, result contracts and
+named foreign obligations. OwnershipPlans checks the independent spatial
+invariant. PermissionFlow covers every finite execution, with a failed
+permission operation represented as a fault. OwnershipAdmission proves fault
+avoidance and result cleanup for admitted recorded programs. Foreign behavior
+and the C-to-plan projection are separate obligations.
+
+Equal permission states are merged during admission, without merging program
+values or runtime answers. Membership preservation proves that neither branch
+nor any loop execution is lost. Function proofs are checked separately and
+joined by a proved module rule, avoiding one large admission computation.
+
+The underlying CMemory heap is parametric in its cell permission algebra.
+Exclusive cells and fractional read permissions are existing instances. The
+borrow theory distinguishes allocation lifetime, access permission and release
+authority. BorrowingLayouts connects subobject ranges to the existing padded
+record and array layout laws. The native surface is deliberately a conservative
+instance of this more general theory.
+
+REFERENCES
+
+RustBelt: https://plv.mpi-sws.org/rustbelt/popl18/paper.pdf
+Oxide: https://arxiv.org/abs/1903.00982
+Tree Borrows: https://research.ralfj.de/papers/2025-pldi-tree-borrows.pdf
+
+These motivate resource interpretations, source-level loans and the separation
+between a borrow checker and an unsafe aliasing semantics. This implementation
+does not claim to implement or prove any of those complete Rust systems.

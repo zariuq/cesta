@@ -24,6 +24,7 @@ typedef struct {
     Names facts, entry_facts, entry_owned;
     Validator *validators; size_t nvalidators;
     Names reasons;
+    Names limits;
     bool checks_complete;
     CeAtom *written, *body, *target, *instrumented;
 } Protocol;
@@ -141,6 +142,7 @@ static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeEr
     Names cnames = {0};
     add(ps,&cnames,p->name); add(ps,&cnames,p->context);
     add(ps,&cnames,ce_cstr(&ps->arena,"ctx"));
+    add(ps,&cnames,ce_cstr(&ps->arena,"cesta_remaining"));
     if (ce_equal(p->name,p->context)) return ce_error(e,a->offset,"function name conflicts with context type");
     if (!distinct_cname(ps,&cnames,guard_name(ps,id),a->offset,e)) return false;
     add(ps,&cnames,suffixed(ps,id,"_outcome"));
@@ -226,11 +228,49 @@ static State state_copy(Protocols *ps, const Protocol *p, State s) {
 static CeAtom *node(Protocols *ps, const char *head, CeText operand, size_t n) {
     CeAtom *a = ce_atom_new(&ps->arena,CE_ATOM_LIST,(CeText){0},n);
     a->items[0] = ce_atom_new(&ps->arena,CE_ATOM_SYMBOL,ce_cstr(&ps->arena,head),0);
-    a->items[1] = ce_atom_new(&ps->arena,CE_ATOM_SYMBOL,operand,0);
+    if (n > 1) a->items[1] = ce_atom_new(&ps->arena,CE_ATOM_SYMBOL,operand,0);
     return a;
 }
+static bool loop_limit(Protocols *ps, Protocol *p, const CeAtom *a, CeAtom **out, CeError *e) {
+    if (form(a,"Limit") && a->len == 2) {
+        CeText field;
+        if (!name(a->items[1],&field,e)) return false;
+        add(ps,&p->limits,field);
+        *out = node(ps,"Field",field,2); return true;
+    }
+    if (a->kind != CE_ATOM_SYMBOL || !a->text.len ||
+        (a->text.len > 1 && a->text.data[0] == '0'))
+        return ce_error(e,a->offset,"Loop bound is a canonical uint64 literal or (Limit FIELD)");
+    uint64_t value = 0;
+    for (size_t i = 0; i < a->text.len; ++i) {
+        unsigned c = a->text.data[i];
+        if (c < '0' || c > '9' || value > (UINT64_MAX-(c-'0'))/10)
+            return ce_error(e,a->offset,"Loop bound does not fit uint64_t");
+        value = value*10+(c-'0');
+    }
+    *out = node(ps,"Literal",a->text,2); return true;
+}
 /* Check every branch; metadata facts are monotone and owners are linear. */
-static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s, CeAtom **target, CeError *e) {
+static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s,
+                       const State *loop, CeAtom **target, CeError *e) {
+    if (form(a,"Continue")) {
+        if (a->len != 1 || !loop) return ce_error(e,a->offset,"Continue requires an enclosing Loop");
+        for (size_t i = 0; i < p->nresources; ++i) if (s.owned[i] != loop->owned[i])
+            return ce_error(e,a->offset,"Continue changes the loop's owned resources");
+        for (size_t i = 0; i < p->facts.len; ++i) if (loop->facts[i] && !s.facts[i])
+            return ce_error(e,a->offset,"Continue loses a loop-entry fact");
+        *target = node(ps,"Continue",(CeText){0},1); return true;
+    }
+    if (form(a,"Loop")) {
+        if (a->len != 4) return ce_error(e,a->offset,"Loop takes a bound, body and exhausted branch");
+        *target = node(ps,"While",(CeText){0},4);
+        if (!loop_limit(ps,p,a->items[1],&(*target)->items[1],e)) return false;
+        /* Every iteration may have committed. Even zero-bound exits use this
+         * conservative history, so exhaustion cannot become a silent decline. */
+        State entry = state_copy(ps,p,s); entry.effect = true;
+        return check_body(ps,p,a->items[2],entry,&entry,&(*target)->items[2],e) &&
+               check_body(ps,p,a->items[3],entry,loop,&(*target)->items[3],e);
+    }
     if (a->kind != CE_ATOM_LIST || a->len < 2 || a->items[1]->kind != CE_ATOM_SYMBOL)
         return ce_error(e,a->offset,"expected a protocol statement");
     CeText id = a->items[1]->text;
@@ -256,8 +296,8 @@ static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s, CeA
         State yes = state_copy(ps,p,s), no = state_copy(ps,p,s);
         for (size_t i = 0; i < hook->proves.len; ++i) yes.facts[find(p->facts,hook->proves.items[i])] = true;
         *target = node(ps,"IfCall",hook->cname,4);
-        return check_body(ps,p,a->items[2],yes,&(*target)->items[2],e) &&
-               check_body(ps,p,a->items[3],no,&(*target)->items[3],e);
+        return check_body(ps,p,a->items[2],yes,loop,&(*target)->items[2],e) &&
+               check_body(ps,p,a->items[3],no,loop,&(*target)->items[3],e);
     }
     size_t r = resource_index(p,id);
     if (r == SIZE_MAX) return ce_error(e,a->offset,"unknown statement or undeclared resource");
@@ -269,8 +309,8 @@ static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s, CeA
                 return ce_error(e,a->offset,"resource acquisition requires an unestablished fact");
         State yes = state_copy(ps,p,s), no = state_copy(ps,p,s); yes.owned[r] = true;
         *target = node(ps,"IfCall",resource->acquire,4);
-        return check_body(ps,p,a->items[2],yes,&(*target)->items[2],e) &&
-               check_body(ps,p,a->items[3],no,&(*target)->items[3],e);
+        return check_body(ps,p,a->items[2],yes,loop,&(*target)->items[2],e) &&
+               check_body(ps,p,a->items[3],no,loop,&(*target)->items[3],e);
     }
     if (form(a,"Release") || form(a,"Transfer")) {
         if (a->len != 3 || !s.owned[r]) return ce_error(e,a->offset,"Release/Transfer needs an owned resource and a continuation");
@@ -280,7 +320,7 @@ static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s, CeA
         State next = state_copy(ps,p,s); next.owned[r] = false;
         next.effect |= form(a,"Transfer");
         *target = node(ps,"VoidCall",form(a,"Release") ? resource->release : resource->transfer,3);
-        return check_body(ps,p,a->items[2],next,&(*target)->items[2],e);
+        return check_body(ps,p,a->items[2],next,loop,&(*target)->items[2],e);
     }
     return ce_error(e,a->offset,"unknown protocol statement");
 }
@@ -320,7 +360,26 @@ static CeText reason_name(Protocols *ps, const Protocol *p, const CeAtom *key) {
 }
 /* Validation observes state without replaying a guard or preparation hook.
  * The deciding Boolean call is retained through void cleanup for diagnostics. */
-static CeAtom *instrument_body(Protocols *ps, Protocol *p, const CeAtom *body, CeAtom *key) {
+static CeAtom *instrument_body(Protocols *ps, Protocol *p, const CeAtom *body, CeAtom *key,
+                                State state, const State *loop) {
+    if (form(body,"Continue")) {
+        CeAtom *next = node(ps,"Continue",(CeText){0},1);
+        for (size_t i = p->nresources; i > 0; --i)
+            next = validate(ps,p,"own",p->resources[i-1].id,loop->owned[i-1],next);
+        for (size_t i = p->facts.len; i > 0; --i) if (loop->facts[i-1])
+            next = validate(ps,p,"fact",p->facts.items[i-1],true,next);
+        return next;
+    }
+    if (form(body,"Loop")) {
+        CeAtom *next = node(ps,"While",(CeText){0},4);
+        const CeAtom *bound = body->items[1];
+        next->items[1] = form(bound,"Limit") ? node(ps,"Field",bound->items[1]->text,2) :
+                                              node(ps,"Literal",bound->text,2);
+        State entry = state_copy(ps,p,state); entry.effect = true;
+        next->items[2] = instrument_body(ps,p,body->items[2],key,entry,&entry);
+        next->items[3] = instrument_body(ps,p,body->items[3],key,entry,loop);
+        return next;
+    }
     if (form(body,"Return")) {
         CeAtom *next = node(ps,"Return",body->items[1]->text,2);
         if (ce_is(body->items[1]->text,"declined")) {
@@ -334,32 +393,38 @@ static CeAtom *instrument_body(Protocols *ps, Protocol *p, const CeAtom *body, C
     }
     if (form(body,"Call")) {
         const Hook *h = &p->hooks[hook_index(p,body->items[1]->text)];
+        State yes = state_copy(ps,p,state), no = state_copy(ps,p,state);
+        yes.effect |= ce_is(h->kind,"effect"); no.effect = yes.effect;
+        for (size_t i = 0; i < h->proves.len; ++i) yes.facts[find(p->facts,h->proves.items[i])] = true;
         CeAtom *next = node(ps,"IfCall",h->cname,4);
-        next->items[2] = instrument_body(ps,p,body->items[2],reply_key(ps,h->cname,true));
-        next->items[3] = instrument_body(ps,p,body->items[3],reply_key(ps,h->cname,false));
+        next->items[2] = instrument_body(ps,p,body->items[2],reply_key(ps,h->cname,true),yes,loop);
+        next->items[3] = instrument_body(ps,p,body->items[3],reply_key(ps,h->cname,false),no,loop);
         next = validate_names(ps,p,"own",h->uses,next);
         return validate_names(ps,p,"fact",h->requires,next);
     }
     const Resource *r = &p->resources[resource_index(p,body->items[1]->text)];
     if (form(body,"Acquire")) {
+        State yes = state_copy(ps,p,state); yes.owned[resource_index(p,r->id)] = true;
         CeAtom *next = node(ps,"IfCall",r->acquire,4);
         next->items[2] = validate(ps,p,"own",r->id,true,
-            instrument_body(ps,p,body->items[2],reply_key(ps,r->acquire,true)));
+            instrument_body(ps,p,body->items[2],reply_key(ps,r->acquire,true),yes,loop));
         next->items[3] = validate(ps,p,"own",r->id,false,
-            instrument_body(ps,p,body->items[3],reply_key(ps,r->acquire,false)));
+            instrument_body(ps,p,body->items[3],reply_key(ps,r->acquire,false),state,loop));
         next = validate(ps,p,"own",r->id,false,next);
         return validate_names(ps,p,"fact",r->acquire_requires,next);
     }
     bool transfer = form(body,"Transfer");
+    State after = state_copy(ps,p,state); after.owned[resource_index(p,r->id)] = false;
+    after.effect |= transfer;
     CeAtom *next = node(ps,"VoidCall",transfer ? r->transfer : r->release,3);
-    next->items[2] = validate(ps,p,"own",r->id,false,instrument_body(ps,p,body->items[2],key));
+    next->items[2] = validate(ps,p,"own",r->id,false,instrument_body(ps,p,body->items[2],key,after,loop));
     if (transfer) next = validate_names(ps,p,"fact",r->transfer_requires,next);
     return validate(ps,p,"own",r->id,true,next);
 }
-static void instrument(Protocols *ps, Protocol *p) {
+static void instrument(Protocols *ps, Protocol *p, State state) {
     CeAtom *entry = ce_atom_new(&ps->arena,CE_ATOM_LIST,(CeText){0},1);
     entry->items[0] = symbol(ps,"entry"); p->checks_complete = true;
-    CeAtom *target = instrument_body(ps,p,p->body,entry);
+    CeAtom *target = instrument_body(ps,p,p->body,entry,state,NULL);
     for (size_t i = p->nresources; i > 0; --i)
         target = validate(ps,p,"own",p->resources[i-1].id,
             find(p->entry_owned,p->resources[i-1].id) != SIZE_MAX,target);
@@ -367,7 +432,7 @@ static void instrument(Protocols *ps, Protocol *p) {
 }
 static const char *const instrumentation_suffixes[] = {
     "_decline_reason", "_decline_count", "_counters", "_count_decline", "_counts", "_reason",
-    "_COUNTED", "_CHECKED", "_COUNT_DECLINE"
+    "_COUNTED", "_CHECKED", "_COUNT_DECLINE", "_CHECK_FAILURE"
 };
 static bool load(Protocols *ps, const char *path, const char *theory, CeError *e) {
     ps->catalog.syntax = &ps->syntax;
@@ -392,8 +457,8 @@ static bool load(Protocols *ps, const char *path, const char *theory, CeError *e
                        .owned=ce_alloc(&ps->arena,p->nresources*sizeof(bool))};
         for (size_t j = 0; j < p->entry_facts.len; ++j) entry.facts[find(p->facts,p->entry_facts.items[j])] = true;
         for (size_t j = 0; j < p->entry_owned.len; ++j) entry.owned[resource_index(p,p->entry_owned.items[j])] = true;
-        if (!check_body(ps,p,p->body,entry,&p->target,e)) return false;
-        instrument(ps,p);
+        if (!check_body(ps,p,p->body,entry,NULL,&p->target,e)) return false;
+        instrument(ps,p,entry);
     }
     Names exported = {0};
     for (size_t i = 0; i < ps->len; ++i) {
@@ -410,7 +475,8 @@ static bool load(Protocols *ps, const char *path, const char *theory, CeError *e
     }
     for (size_t i = 0; i < ps->len; ++i) {
         const Protocol *p = &ps->items[i];
-        if (find(exported,p->context) != SIZE_MAX || ce_is(p->name,"ctx") || ce_is(p->context,"ctx"))
+        if (find(exported,p->context) != SIZE_MAX || ce_is(p->name,"ctx") || ce_is(p->context,"ctx") ||
+            ce_is(p->name,"cesta_remaining") || ce_is(p->context,"cesta_remaining"))
             return ce_error(e,p->written->offset,"context or protocol name conflicts with an exported declaration or local parameter");
         for (size_t j = 0; j < p->nhooks; ++j) if (find(exported,p->hooks[j].cname) != SIZE_MAX)
             return ce_error(e,p->written->offset,"hook conflicts with an exported declaration");
@@ -428,7 +494,7 @@ static bool load(Protocols *ps, const char *path, const char *theory, CeError *e
 static void write_text(FILE *f, CeText s) { fwrite(s.data,1,s.len,f); }
 static void indent(FILE *f, size_t level) { for (size_t i = 0; i < level; ++i) fputs("    ",f); }
 static bool linear(const CeAtom *target) {
-    return form(target,"Return") ||
+    return form(target,"Return") || form(target,"Continue") ||
         ((form(target,"VoidCall") || form(target,"Tick")) && linear(target->items[2])) ||
         (form(target,"Validate") && linear(target->items[5]));
 }
@@ -438,14 +504,30 @@ static void print_c(Protocols *ps, FILE *f, const Protocol *p, const CeAtom *tar
         fprintf(f,"#if %.*s_CHECKED\n",(int)name.len,name.data);
         indent(f,level); fputs(ce_is(target->items[4]->text,"true") ? "if (!" : "if (",f);
         write_text(f,target->items[3]->text); fputs("(ctx)) {\n",f);
-        indent(f,level+1); fputs("fputs(\"protocol ",f); write_text(f,name);
-        fputs(": ",f); write_text(f,target->items[1]->text); fputc(' ',f); write_text(f,target->items[2]->text);
-        fputs(" must be ",f); write_text(f,target->items[4]->text); fputs("\\n\", stderr);\n",f);
-        indent(f,level+1); fputs("abort();\n",f); indent(f,level); fputs("}\n#endif\n",f);
+        indent(f,level+1); write_text(f,name); fputs("_CHECK_FAILURE(ctx, \"",f);
+        write_text(f,target->items[1]->text); fputs("\", \"",f); write_text(f,target->items[2]->text);
+        fputs("\", ",f); fputs(ce_is(target->items[4]->text,"true") ? "1" : "0",f); fputs(");\n",f);
+        indent(f,level+1); fputs("for (;;) {}\n",f); indent(f,level); fputs("}\n#endif\n",f);
         print_c(ps,f,p,target->items[5],level); return;
     }
     indent(f,level);
-    if (form(target,"Return")) {
+    if (form(target,"Continue")) {
+        fputs("continue;\n",f);
+    } else if (form(target,"While")) {
+        const CeAtom *bound = target->items[1];
+        fputs("{\n",f);
+        if (form(bound,"Field")) {
+            indent(f,level+1); fputs("_Static_assert(_Generic(&(ctx->",f); write_text(f,bound->items[1]->text);
+            fputs("), uint64_t *: 1, const uint64_t *: 1, default: 0), \"protocol limit field must be nonvolatile uint64_t\");\n",f);
+        }
+        indent(f,level+1); fputs("for (uint64_t cesta_remaining = ",f);
+        if (form(bound,"Field")) { fputs("ctx->",f); write_text(f,bound->items[1]->text); }
+        else { fputs("UINT64_C(",f); write_text(f,bound->items[1]->text); fputc(')',f); }
+        fputs("; cesta_remaining != 0; --cesta_remaining) {\n",f);
+        print_c(ps,f,p,target->items[2],level+2);
+        indent(f,level+1); fputs("}\n",f); print_c(ps,f,p,target->items[3],level+1);
+        indent(f,level); fputs("}\n",f);
+    } else if (form(target,"Return")) {
         fputs("return ",f); write_text(f,name); fputc('_',f); write_text(f,target->items[1]->text); fputs(";\n",f);
     } else if (form(target,"Tick")) {
         write_text(f,name); fputs("_COUNT_DECLINE(ctx, ",f); write_text(f,reason_name(ps,p,target->items[1]));
@@ -477,7 +559,10 @@ static void instrumentation_header(const Protocol *p, FILE *f) {
     fprintf(f,"\n#ifndef %.*s_CHECKED\n#define %.*s_CHECKED 0\n#endif\n",n,s,n,s);
     fprintf(f,"#ifdef %.*s_COUNT_DECLINE\n#define %.*s_COUNTED 1\n#else\n#define %.*s_COUNTED 0\n#define %.*s_COUNT_DECLINE(ctx, reason) ((void)0)\n#endif\n",n,s,n,s,n,s,n,s);
     fprintf(f,"#if %.*s_CHECKED\n",n,s);
-    if (p->checks_complete) fputs("#include <stdio.h>\n#include <stdlib.h>\n",f);
+    if (p->checks_complete) {
+        fprintf(f,"#ifndef %.*s_CHECK_FAILURE\n#include <stdio.h>\n#include <stdlib.h>\n",n,s);
+        fprintf(f,"#define %.*s_CHECK_FAILURE(ctx, kind, id, expected) \\\n    (fprintf(stderr, \"protocol %.*s: %%s %%s must be %%s\\n\", \\\n             kind, id, (expected) ? \"true\" : \"false\"), abort())\n#endif\n",n,s,n,s);
+    }
     else fputs("#error \"checked protocol requires validators for every used fact and resource\"\n",f);
     fputs("#endif\n#include <stdint.h>\n",f);
     fprintf(f,"\ntypedef enum %.*s_decline_reason {\n",n,s);
@@ -500,6 +585,8 @@ static void header(Protocols *ps, FILE *f) {
                 (int)p->name.len,p->name.data,(int)p->name.len,p->name.data);
         fputs("#if defined(",f); write_text(f,p->name); fputc(')',f);
         guard_macro(f,p->context); guard_macro(f,ce_cstr(&ps->arena,"ctx"));
+        guard_macro(f,ce_cstr(&ps->arena,"cesta_remaining"));
+        for (size_t j = 0; j < p->limits.len; ++j) guard_macro(f,p->limits.items[j]);
         guard_macro(f,suffixed(ps,p->name,"_outcome"));
         for (size_t j = 0; j < COUNT(outcomes); ++j)
             guard_macro(f,suffixed(ps,suffixed(ps,p->name,"_"),outcomes[j]));
@@ -508,8 +595,8 @@ static void header(Protocols *ps, FILE *f) {
             guard_macro(f,p->resources[j].acquire); guard_macro(f,p->resources[j].release); guard_macro(f,p->resources[j].transfer);
         }
         for (size_t j = 0; j < p->nvalidators; ++j) guard_macro(f,p->validators[j].cname);
-        /* The last two names are the documented configuration macros. */
-        for (size_t j = 0; j+2 < COUNT(instrumentation_suffixes); ++j)
+        /* The last three names are the documented configuration macros. */
+        for (size_t j = 0; j+3 < COUNT(instrumentation_suffixes); ++j)
             guard_macro(f,suffixed(ps,p->name,instrumentation_suffixes[j]));
         for (size_t j = 0; j < p->reasons.len; ++j) guard_macro(f,p->reasons.items[j]);
         fputs("\n#error \"protocol identifier conflicts with a macro\"\n#endif\n",f);

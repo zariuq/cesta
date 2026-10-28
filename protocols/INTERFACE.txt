@@ -223,3 +223,50 @@ native hook. Protocol bodies are finite; hooks may still diverge or suspend.
 Operation contracts describe operation footprints, demand and policy. Executable
 protocols define sequencing. There is no automatic inference that a hook obeys
 an operation declaration, and an unknown footprint never establishes purity.
+
+Bounded iteration
+-----------------
+
+  (Loop 64 BODY EXHAUSTED)
+  (Loop (Limit budget) BODY EXHAUSTED)
+  (Continue)
+
+Loop snapshots its bound once and executes BODY at most that many times.
+Continue starts the next iteration of the nearest enclosing loop. Return exits
+the protocol. Exhaustion executes EXHAUSTED; that branch is part of the checked
+protocol, so timeout cleanup and its outcome are explicit. Nested loops are
+supported. Continue outside a loop is refused.
+
+A literal is a canonical decimal integer in the uint64_t range. A field bound
+names a nonvolatile uint64_t (or const uint64_t) context member; generated C
+checks the actual member type. A hook changing that member does not change the
+snapshot. The exporter emits a countdown, not a copy of BODY for every step.
+
+Every Continue must preserve the loop entry's exact set of resource tokens and
+at least its facts. It cannot silently drop a pending request or DMA buffer.
+The conservative checker treats entering a loop as committed history, even
+when its bound is zero; declining after a loop is refused. Exhaustion and all
+other returns must discharge pending tokens. The bound counts iterations,
+not elapsed time or the internal work of a native hook. Bounded completion
+therefore requires the hooks themselves to return.
+
+Checked mode re-observes entry facts and ownership at Continue. A freestanding
+program may define run_CHECK_FAILURE(ctx, kind, id, expected) before importing
+the protocol. The hook must stop execution; if it returns, generated code
+remains in a nonreturning loop rather than executing an unchecked continuation.
+Without an override, the default prints the failed check and aborts. Validators
+must be pure and truthful in either configuration.
+
+protocols/Wait.module gives a bounded request wait with explicit transfer on
+completion and release on failure or timeout. A DMA timeout instead commonly
+transfers the obligation to a failed-device quarantine: timing out is not proof
+that hardware has stopped accessing its buffer.
+
+The bounded source calculus and independently defined call/branch/countdown
+calculus have equal executions, including calls, results, state and replies.
+Lean also proves checker equivalence to the inductive formation rules, the
+iteration bound, owner preservation at continuation and successful checked-run
+erasure. tests/protocol_loop_admission.py checks the actual recorded ordinary
+and instrumented targets and refuses altered targets. Native hooks, C text
+printing and compilation remain separate obligations; this is not a proof of
+arbitrary C hooks or a general borrow checker.

@@ -3,6 +3,7 @@
 #include "pp.h"
 #include "native.h"
 #include "diagnose.h"
+#include "ownership.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -284,7 +285,7 @@ static bool link_option(const char *a) {
 /* The native compiler supplies active header identifiers and macro
    replacement spelling. This is a finite name inventory for macro lowering,
    not a Cesta preprocessing or C semantic interpretation. */
-static bool native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
+static bool native_render(const CeGrammar *g, CeArena *arena, CeText source,
                            const char *presentation, const char *identity,
                            size_t n, char **args, const char *cache, CeLazyLexer *lexer, bool readable,
                            FILE *plan, CeNativeOutput *out, CeError *error) {
@@ -335,6 +336,27 @@ static bool native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
         return ce_error(error,0,"native compiler could not admit the macro name environment");
     CeNativeEnvironment environment = {.identifiers=inventory,.readable=readable,.lines=lines,.lexer=lexer,.plan=plan};
     return ce_native_text_at(g,arena,source,presentation,identity,&environment,out,error);
+}
+
+static bool native_prepare(const CeGrammar *g, CeArena *arena, CeText source,
+                           const char *presentation, const char *identity,
+                           size_t n, char **args, const char *cache, CeLazyLexer *lexer, bool readable,
+                           FILE *plan, CeNativeOutput *out, CeError *error) {
+    if (!native_render(g,arena,source,presentation,identity,n,args,cache,lexer,readable,plan,out,error)) return false;
+    if (!out->ownership) return true;
+    char **flags = ce_alloc(arena,(n+1)*sizeof(*flags)); size_t count = 1; flags[0] = args[0];
+    for (size_t i = 1; i < n; ++i) {
+        const char *a = args[i];
+        if (!strcmp(a,"-c") || !strcmp(a,"-S") || !strcmp(a,"-E") || !strcmp(a,"-fsyntax-only") ||
+            dependency_option(a) || link_option(a) || !strncmp(a,"-o",2) || !strcmp(a,"-x")) {
+            if (option_value(a) && i+1 < n) ++i;
+            continue;
+        }
+        if (a[0] != '-') continue;
+        flags[count++] = args[i];
+        if (option_value(a) && i+1 < n) flags[count++] = args[++i];
+    }
+    return ce_ownership_check(arena,out->ownership,out->text,identity,count,flags,plan,error);
 }
 
 /* Both renderings print the same grammar, so they share one lexer. */

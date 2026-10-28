@@ -1,0 +1,13 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all))
+    (typedef (struct Pair (int left) (int right)) Pair)
+    (fn (static void) increment ((int (* value)))
+      (++ (* value)))
+    (fn int main (void)
+      (var Pair pair (compound Pair 4 8))
+      (block
+        (var int (* left) (& (. pair left)))
+        (call increment (& (. pair right)))
+        (+= (* left) 3))
+      (return (?: (&& (== (. pair left) 7) (== (. pair right) 9)) 0 1)))))

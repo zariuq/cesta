@@ -18,6 +18,7 @@ typedef struct {
     const CeMapDirective *directives; size_t ndirectives;
     /* Source dependencies alone do not require a compiler macro-name scan. */
     bool needs_macro_inventory;
+    const CeAtom *ownership;
 } CeNativeOutput;
 /* lexer, when present, is lent for printing this grammar across renderings. */
 /* plan receives readable macro records or checked byte-buffer projections. */

@@ -71,10 +71,11 @@ typedef struct {
     NativeImport *imports; size_t nimports;
     CeLazyLexer *lexer;
     const CeLineMarks *marks;   /* compile path: branches carry #line too */
+    const CeAtom *ownership;
 } Native;
 
 static bool accepts(void *context, const CeAtom *a, int sort) {
-    static const char *names[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros","use-protocols"};
+    static const char *names[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros","use-protocols","ownership"};
     Native *native = context;
     const CeSymbol *symbol = &native->grammar->symbols[sort];
     if (symbol->kind != CE_NONTERMINAL || symbol->list_element >= 0) return false;
@@ -126,6 +127,25 @@ static bool conditional(Native *native, const CeAtom *a, int sort, int parent,
 
 static bool form(Native *native, const CeAtom *a, int sort, int parent, CeArena *arena,
                   FILE *file, CeAtomDecoder recurse, void *context, CeError *error, size_t depth) {
+    if (head(a,"ownership")) {
+        if (native->ownership != a)
+            return ce_error(error,a->offset,"ownership declaration must be an unconditional unit form");
+        CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;
+        if (!ce_is(position,"ExternalDeclaration"))
+            return ce_error(error,a->offset,"ownership declaration requires translation-unit scope");
+        return fputs("#if defined(__SIZEOF_POINTER__) && defined(__SIZEOF_LONG__)\n"
+            "_Static_assert(__SIZEOF_POINTER__ == 8 && __SIZEOF_LONG__ == 8, "
+            "\"ownership ABI profile requires x86_64 SysV\");\n#endif\n"
+            "_Static_assert((unsigned char)256 == 0 && (char)-1 < 0 && "
+            "sizeof(void *) == 8 && sizeof(long) == 8 && "
+            "sizeof(int) == 4 && sizeof(short) == 2 && sizeof(long long) == 8 && "
+            "sizeof(float) == 4 && sizeof(double) == 8 && sizeof(long double) == 16 && "
+            "sizeof(enum { __cesta_ownership_abi_enum = 1 }) == 4 && "
+            "_Alignof(void *) == 8 && _Alignof(long) == 8 && "
+            "_Alignof(long double) == 16 && sizeof(struct { char a; long b; }) == 16 && "
+            "sizeof(struct { char a; long double b; }) == 32, "
+            "\"ownership ABI profile requires x86_64 SysV\");\n",file) >= 0;
+    }
     if (head(a,"use-macros") || head(a,"use-protocols")) {
         CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;
         return ((native->macros || head(a,"use-protocols")) && ce_is(position,"ExternalDeclaration")) ||
@@ -194,7 +214,7 @@ static unsigned extension(void *context, const CeAtom *a, int sort, int parent,
     Native *native = context;
     unsigned macro = ce_macros_expand(native->macros,a,sort,parent,arena,out,recurse,recurse_context,error,depth);
     if (macro != CE_EXTENSION_UNHANDLED) return macro;
-    static const char *names[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros","use-protocols"};
+    static const char *names[] = {"include","define","undef","cpp-if","cpp-ifdef","cpp-ifndef","comment","native","use-macros","use-protocols","ownership"};
     bool known = false;
     for (size_t i = 0; i < sizeof(names)/sizeof(*names); ++i) known |= head(a,names[i]);
     if (!known) return CE_EXTENSION_UNHANDLED;
@@ -253,6 +273,10 @@ bool ce_native_text_at(const CeGrammar *g, CeArena *arena, CeText source,
     bool ok = true;
     if (head(atom,"unit")) for (size_t i = 1; i < atom->len && ok; ++i) {
         const CeAtom *use = atom->items[i];
+        if (head(use,"ownership")) {
+            if (out->ownership) { ok = ce_error(error,use->offset,"duplicate ownership declaration"); break; }
+            out->ownership = native.ownership = use; continue;
+        }
         bool protocol = head(use,"use-protocols");
         if (!head(use,"use-macros") && !protocol) continue;
         if (use->len != 3 || use->items[1]->kind != CE_ATOM_TEXT || use->items[2]->kind != CE_ATOM_SYMBOL) {
