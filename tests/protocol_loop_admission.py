@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 from protocols import CESTA, ROOT, run
-from protocol_admission import string, strings, reason
+from protocol_admission import string, strings, reason, exit_facts
 from oracles.pro_compact_cesta import Sym, parse
 
 MODEL = 'Mettapedia.GSLT.LanguageDef.ExecutableProtocolLoops'
@@ -36,12 +36,14 @@ def body(value,target=False):
                   {'Call':'call','Acquire':'acquire','Release':'release','Transfer':'transfer'})
     return '(.'+constructors[kind]+' '+string(value[1])+''.join(' '+body(v,target) for v in value[2:])+')'
 
-def source(name,parts):
+def source(name,parts,exits=None):
     hooks=[]
     for h in parts[1][1:]:
-        assert h[0]=='Hook' and len(h)==7
+        assert h[0]=='Hook' and len(h) in (7,8)
+        if len(h)==8: assert h[7][0]=='Invalidates'
         hooks.append('⟨'+', '.join([string(h[1]),string(h[2]),'.'+str(h[3]),
-                                   strings(h[4][1:]),strings(h[5][1:]),strings(h[6][1:])])+'⟩')
+                                   strings(h[4][1:]),strings(h[5][1:]),strings(h[6][1:]),
+                                   strings(h[7][1:] if len(h)==8 else [])])+'⟩')
     resources=[]
     for r in parts[2][1:]:
         assert r[0]=='Resource' and len(r) in (5,7)
@@ -50,7 +52,7 @@ def source(name,parts):
                            strings(r[6][1:] if len(r)==7 else [])])+'⟩')
     return '⟨'+', '.join([string(name),string(parts[0][1]),'['+', '.join(hooks)+']',
                           '['+', '.join(resources)+']',strings(parts[3][1][1:]),
-                          strings(parts[3][2][1:]),body(parts[4][1])])+'⟩'
+                          strings(parts[3][2][1:]),body(parts[4][1]),exit_facts(exits)])+'⟩'
 
 def checked(value):
     kind=str(value[0])
@@ -132,13 +134,15 @@ def main():
         header=work/(path.stem+'.h')
         run([args.cesta,'protocol','export',path,'Protocols','-o',header,'--plan',plan])
         for recorded in parse(plan.read_bytes()):
-            assert len(recorded)==9 and recorded[0]=='cesta-protocol-plan/1'
+            assert len(recorded) in (9,10) and recorded[0]=='cesta-protocol-plan/1'
+            exits=recorded[9] if len(recorded)==10 else None
             name=recorded[1]; parts=recorded[2:7]; target=recorded[7][1]
             key='recorded'+str(count)
-            lines.append('def '+key+' : Plan := ⟨'+source(name,parts)+', '+body(target,True)+'⟩')
-            lines.append('example : checkPlan '+key+' = true := by decide')
+            lines.append('def '+key+' : Plan := ⟨'+source(name,parts,exits)+', '+body(target,True)+'⟩')
+            accepted='accepted'+str(count)
+            lines.append('theorem '+accepted+' : checkPlan '+key+' = true := by decide')
             for mutant in mutations(target):
-                lines.append('example : checkPlan { '+key+' with target := '+body(mutant,True)+' } = false := by decide')
+                lines.append('example : checkPlan { '+key+' with target := '+body(mutant,True)+' } = false :=\n  changed_target_refused ((checkPlan_iff _).mp '+accepted+') _ (by decide)')
                 refused+=1
             instrumentation=recorded[8]
             assert instrumentation[0]=='Instrumentation'
@@ -148,17 +152,18 @@ def main():
             written='some '+checked(instrumentation[2][1]) if available else 'none'
             checked_key='checked'+str(count)
             lines.append('def '+checked_key+' : Instrumentation.CheckedPlan := ⟨'+key+', '+validators+', '+written+'⟩')
-            lines.append('example : Instrumentation.checkCheckedPlan '+checked_key+' = true := by decide')
+            checked_accepted='checkedAccepted'+str(count)
+            lines.append('theorem '+checked_accepted+' : Instrumentation.checkCheckedPlan '+checked_key+' = true := by decide')
             if available:
                 for mutant in checked_mutations(instrumentation[2][1]):
-                    lines.append('example : Instrumentation.checkCheckedPlan { '+checked_key+' with instrumented := some '+checked(mutant)+' } = false := by decide')
+                    lines.append('example : Instrumentation.checkCheckedPlan { '+checked_key+' with instrumented := some '+checked(mutant)+' } = false :=\n  Instrumentation.changed_instrumentation_refused ((Instrumentation.checkCheckedPlan_iff _).mp '+checked_accepted+') _ (by decide)')
                     refused+=1
             count+=1
     for theorem in ['checkBody_iff','checkPlan_iff','lower_eval_exact','continue_preserves_owners',
-                    'return_discharges','sourceLoop_turns_le','targetLoop_turns_le','sourceLoop_retains_charges']:
+                    'return_discharges','sourceLoop_turns_le','targetLoop_turns_le','sourceLoop_retains_charges','changed_target_refused']:
         lines.append('#print axioms '+NS+'.'+theorem)
     for theorem in ['instrumentBody_erase','Run.erases','failed_validation_stops','checkCheckedPlan_iff',
-                    'CheckedPlanValid.success_exact']:
+                    'CheckedPlanValid.success_exact','changed_instrumentation_refused']:
         lines.append('#print axioms '+NS+'.Instrumentation.'+theorem)
     lean=work/'Admission.lean';lean.write_text('\n'.join(lines)+'\n')
     command=['lake','env','lean']

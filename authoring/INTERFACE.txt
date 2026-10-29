@@ -103,7 +103,7 @@ flags and header environments.
 Project builds
 --------------
 
-  cesta build [-C DIR] [-f cesta.project] [--cc COMPILER] [-j N] [-v] [--export-c DIR] [TARGET...]
+  cesta build [-C DIR] [-f cesta.project] [--cc COMPILER] [-j N] [-v] [--checked-hints] [--export-c DIR] [TARGET...]
 
 builds the targets a project document declares (all of them by default):
 

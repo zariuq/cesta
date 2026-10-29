@@ -53,6 +53,7 @@ typedef struct {
     Words *inputs, *compile_inputs;
     bool *edges, *selected;
     size_t *order;
+    bool checked_hints;
 } Project;
 
 static void push(Words *w, char *word) {
@@ -333,6 +334,10 @@ static void compile_flags(Project *p, const Target *t, Words *out) {
     for (size_t k = 0; k < t->flags.len; ++k) push(out,t->flags.items[k]);
     for (size_t k = 0; k < t->includes.len; ++k) push(out,join(p->arena,"-I",t->includes.items[k],""));
     for (size_t k = 0; k < t->defines.len; ++k) push(out,join(p->arena,"-D",t->defines.items[k],""));
+    if (p->checked_hints) {
+        push(out,"-UCESTA_CHECKED_OPTIMIZE");
+        push(out,"-DCESTA_CHECKED_OPTIMIZE=1");
+    }
 }
 
 static const char *target_output(Project *p, const Target *t) {
@@ -759,7 +764,7 @@ static int export_targets(Project *p, const Options *o, const char *into) {
                 fprintf(stderr,"cesta build: cannot copy %s\n",source); result = 1;
             }
             if (result) break;
-            const char *object = join(arena,p->out,"/",join(arena,t->name,"/obj/",join(arena,exported,".o","")));
+            const char *object = join(arena,p->out,"/",join(arena,t->name,"/obj/",join(arena,source,".o","")));
             const char *rendered = join(arena,into,"/",exported);
             if (!export_headers(p,o,&flags,source,rendered,object,into)) { result = 1; break; }
             push(&objects,(char *)object);
@@ -804,6 +809,7 @@ int ce_build_command(int argc, char **argv) {
     CeArena arena = {0};
     Options o = {.jobs=1};
     const char *file = "cesta.project", *directory = NULL, *export_directory = NULL;
+    bool checked_hints = false;
     char **wanted = ce_alloc(&arena,(size_t)argc*sizeof(*wanted)); size_t nwanted = 0;
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i],"-C") && i+1 < argc) directory = argv[++i];
@@ -812,9 +818,10 @@ int ce_build_command(int argc, char **argv) {
         else if (!strcmp(argv[i],"-j") && i+1 < argc) o.jobs = (size_t)strtoul(argv[++i],NULL,10);
         else if (!strncmp(argv[i],"-j",2) && argv[i][2]) o.jobs = (size_t)strtoul(argv[i]+2,NULL,10);
         else if (!strcmp(argv[i],"-v")) o.verbose = true;
+        else if (!strcmp(argv[i],"--checked-hints")) checked_hints = true;
         else if (!strcmp(argv[i],"--export-c") && i+1 < argc) export_directory = argv[++i];
         else if (argv[i][0] == '-') {
-            fprintf(stderr,"usage: cesta build [-C DIR] [-f FILE] [--cc COMPILER] [-j N] [-v] [--export-c DIR] [TARGET...]\n");
+            fprintf(stderr,"usage: cesta build [-C DIR] [-f FILE] [--cc COMPILER] [-j N] [-v] [--checked-hints] [--export-c DIR] [TARGET...]\n");
             ce_arena_free(&arena); return 2;
         } else wanted[nwanted++] = argv[i];
     }
@@ -825,7 +832,7 @@ int ce_build_command(int argc, char **argv) {
     if (directory && chdir(directory)) {
         fprintf(stderr,"cesta build: cannot enter %s: %s\n",directory,strerror(errno)); ce_arena_free(&arena); return 2;
     }
-    Project p = {.arena=&arena,.path=file};
+    Project p = {.arena=&arena,.path=file,.checked_hints=checked_hints};
     CeError error = {{0},0};
     if (!ce_read_file(&arena,file,&p.text,&error)) {
         fprintf(stderr,"cesta build: %s: %s\n",file,error.message); ce_arena_free(&arena); return 2;

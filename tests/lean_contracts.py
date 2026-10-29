@@ -95,6 +95,8 @@ OWNERSHIP_MODULES = [
     "Mettapedia.Machines.CMemory.PermissionFlow",
     "Mettapedia.Languages.C11.BorrowingLayouts",
     "Mettapedia.GSLT.LanguageDef.OwnershipPlans",
+    "Mettapedia.GSLT.LanguageDef.OwnershipCalls",
+    "Mettapedia.GSLT.LanguageDef.OwnershipViews",
     "Mettapedia.GSLT.LanguageDef.OwnershipAdmission",
 ]
 LAYOUT_BRIDGE_MODULES = [

@@ -64,9 +64,21 @@ responsibility. Contexts may use an existing standard typedef.
 guard inspects eligibility. prepare performs reversible preparation. effect may
 commit an observable change, on either its true or false result. Requires lists
 facts established on this path; Proves adds facts on the true path. Uses lists
-resources whose tokens must be owned while the hook runs. Facts are monotone
-within one invocation: a hook must preserve the established facts. Mutable
-dependencies must be revalidated by the host before it relies on them.
+resources whose tokens must be owned while the hook runs. An optional final
+(Invalidates FACT...) list forgets certificates after that hook, on both true
+and false branches. Requires is checked before forgetting; Proves then adds
+certificates on the true branch. A write that may partly succeed before
+reporting failure must invalidate its dependencies on that path too.
+
+Invalidation forgets knowledge. It does not assert a false validator result,
+change memory permissions, revoke another borrow or destroy an older immutable
+snapshot. A subsequent hook must re-establish any required currentness fact.
+Hooks must preserve certificates they do not invalidate; resource operations
+must preserve certificates. Describe a mutating operation as a hook so its
+invalidation is explicit. Native hook conformance remains an obligation.
+
+Current.module demonstrates a mutation followed by revalidation before
+publication. Omitting that revalidation is refused on either Boolean branch.
 
 Statements
 ----------
@@ -91,6 +103,22 @@ reservation has been validated. Release needs the live token and stays available
 for cleanup even when a publication prerequisite fails.
 All returns, including failure and suspension, must discharge every token.
 Entry Owns can describe tokens supplied to a resumed boundary.
+
+An optional (ExitRequires (OUTCOME FACT...) ...) clause declares certificates
+required at each listed return. It may accompany Checks in either order.
+Outcomes cannot repeat. Static checking requires the certificates on every
+return path; checked execution re-observes them immediately before returning.
+For example, (ExitRequires (suspended wake_registered) (answered result_ready))
+refuses a pause without an established wake registration and an answer without
+a completed result. Existing protocols without the clause retain their policy.
+
+CallOnce.module demonstrates a shared logical call. Its effect requires a
+permit which that effect invalidates on both Boolean outcomes. Later readers
+must observe the saved result or establish a wake registration. The adapter
+owns the persistent call identity, consumed-permit state and wake registry;
+the generated protocol does not add a scheduler. Registration must bind the
+same call and reader to a live completion source or finite timeout. A registered
+obligation alone does not prove that an arbitrary scheduler eventually runs it.
 
 Both effect calls and Transfer prohibit a later declined return. Acquire followed
 by Release can still decline if the host implements it reversibly. A nested

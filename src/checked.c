@@ -139,7 +139,8 @@ static bool identifier(Checked *m, const CeAtom *a, CeText *out) {
         "uint16_t uint32_t uint64_t int8_t int16_t int32_t int64_t uintptr_t "
         "intptr_t SIZE_MAX PTRDIFF_MAX UINT8_MAX UINT16_MAX UINT32_MAX UINT64_MAX "
         "CHAR_BIT NULL offsetof alignas alignof constexpr nullptr static_assert thread_local typeof typeof_unqual "
-        "CESTA_CHECKED_BYTE_VIEWS_DEFINED"))
+        "CESTA_CHECKED_BYTE_VIEWS_DEFINED CESTA_CHECKED_HINTS_DEFINED "
+        "CESTA_CHECKED_OPTIMIZE CESTA_CHECKED_COLD CESTA_CHECKED_ALLOC_SIZE"))
         return bad(m,a,"identifier is reserved by the checked C interface");
     *out = a->text; return true;
 }
@@ -1201,6 +1202,14 @@ static bool function_body(Checked *m, CkFunction *f) {
 
 static void prelude(Checked *m, FILE *file, bool helpers) {
     fputs("#include <stdint.h>\n#include <stddef.h>\n#include <stdbool.h>\n#include <limits.h>\n\n",file);
+    fputs("#ifndef CESTA_CHECKED_HINTS_DEFINED\n#define CESTA_CHECKED_HINTS_DEFINED\n"
+          "#ifndef CESTA_CHECKED_OPTIMIZE\n#define CESTA_CHECKED_OPTIMIZE 0\n#endif\n"
+          "#if CESTA_CHECKED_OPTIMIZE != 0 && CESTA_CHECKED_OPTIMIZE != 1\n"
+          "#error \"CESTA_CHECKED_OPTIMIZE must be 0 or 1\"\n#endif\n"
+          "#if CESTA_CHECKED_OPTIMIZE && (defined(__GNUC__) || defined(__clang__))\n"
+          "#define CESTA_CHECKED_COLD __attribute__((cold, noinline))\n"
+          "#define CESTA_CHECKED_ALLOC_SIZE __attribute__((alloc_size(1)))\n"
+          "#else\n#define CESTA_CHECKED_COLD\n#define CESTA_CHECKED_ALLOC_SIZE\n#endif\n#endif\n\n",file);
     fprintf(file,"_Static_assert(CHAR_BIT == 8 && sizeof(size_t) * CHAR_BIT == %u &&\n"
                  "               PTRDIFF_MAX == SIZE_MAX / 2,\n"
                  "               \"checked module word-bits disagrees with the C target\");\n\n",m->word_bits);
@@ -1216,14 +1225,14 @@ static void prelude(Checked *m, FILE *file, bool helpers) {
           "typedef struct { uint8_t *data; size_t len; } cesta_write_bytes;\n"
           "typedef struct { uint8_t *data; size_t len; } cesta_owned_bytes;\n#endif\n\n",file);
     fprintf(file,"void %.*s(void);\n",(int)m->failure.len,m->failure.data);
-    if (m->allocate.len) fprintf(file,"void *%.*s(size_t);\nvoid %.*s(void *);\n",
+    if (m->allocate.len) fprintf(file,"CESTA_CHECKED_ALLOC_SIZE void *%.*s(size_t);\nvoid %.*s(void *);\n",
         (int)m->allocate.len,m->allocate.data,(int)m->release.len,m->release.data);
     for (size_t i = 0; i < m->nfunctions; ++i) { signature(m,file,&m->functions[i],false); fputs(";\n",file); }
     fputc('\n',file);
     if (!helpers) return;
     const char *name = text_string(m,m->name);
     if (m->helpers&CK_HELP_FAIL)
-        fprintf(file,"static _Noreturn void cesta_%s_fail(void)\n{\n    %.*s();\n    for (;;) {}\n}\n\n",
+        fprintf(file,"static CESTA_CHECKED_COLD _Noreturn void cesta_%s_fail(void)\n{\n    %.*s();\n    for (;;) {}\n}\n\n",
             name,(int)m->failure.len,m->failure.data);
     if (m->helpers&CK_HELP_READ)
         fprintf(file,"static inline uint8_t cesta_%s_read(const uint8_t *data, size_t len, size_t index)\n"

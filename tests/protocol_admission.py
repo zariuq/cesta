@@ -26,6 +26,22 @@ def string(s):
 def strings(values):
     return "[" + ", ".join(string(s) for s in values) + "]"
 
+def clauses(data):
+    assert data[0] == 'Protocol' and 7 <= len(data) <= 9
+    result = {}
+    for item in data[7:]:
+        assert item[0] in ('Checks', 'ExitRequires') and str(item[0]) not in result, item
+        result[str(item[0])] = item
+    return result
+
+
+def exit_facts(values):
+    if values is None:
+        return '[]'
+    assert values[0] == 'ExitRequires'
+    return '[' + ', '.join('(.' + str(row[0]) + ', ' + strings(row[1:]) + ')'
+                           for row in values[1:]) + ']'
+
 
 def body(value, target=False):
     kind = str(value[0])
@@ -36,12 +52,16 @@ def body(value, target=False):
 
 
 def source(name, data):
-    assert data[0] == 'Protocol' and len(data) in (7, 8)
-    if len(data) == 8:
-        assert data[7][0] == 'Checks'
-    hooks = ["⟨" + ", ".join([string(h[1]), string(h[2]), "." + str(h[3]),
-                              strings(h[4][1:]), strings(h[5][1:]), strings(h[6][1:])]) + "⟩"
-             for h in data[3][1:]]
+    extra = clauses(data)
+    hooks = []
+    for h in data[3][1:]:
+        assert h[0] == 'Hook' and len(h) in (7, 8), h
+        assert [str(h[i][0]) for i in (4, 5, 6)] == ['Requires', 'Uses', 'Proves'], h
+        if len(h) == 8:
+            assert h[7][0] == 'Invalidates', h
+        hooks.append("⟨" + ", ".join([string(h[1]), string(h[2]), "." + str(h[3]),
+                              strings(h[4][1:]), strings(h[5][1:]), strings(h[6][1:]),
+                              strings(h[7][1:] if len(h) == 8 else [])]) + "⟩")
     resources = []
     for r in data[4][1:]:
         # Match the native syntax exactly; a future clause must not disappear
@@ -54,11 +74,12 @@ def source(name, data):
                          strings(r[6][1:] if len(r) == 7 else [])]) + "⟩")
     return "⟨" + ", ".join([string(name), string(data[2][1]), "[" + ", ".join(hooks) + "]",
                              "[" + ", ".join(resources) + "]", strings(data[5][1][1:]),
-                             strings(data[5][2][1:]), body(data[6][1])]) + "⟩"
+                             strings(data[5][2][1:]), body(data[6][1]),
+                             exit_facts(extra.get('ExitRequires'))]) + "⟩"
 
 
 def checks(data):
-    values = data[7][1:] if len(data) == 8 else []
+    values = clauses(data).get('Checks', [Sym('Checks')])[1:]
     return '[' + ', '.join('⟨.' + {'Fact': 'fact', 'Own': 'own'}[v[0]] + ', ' +
                            string(v[1]) + ', ' + string(v[2]) + '⟩' for v in values) + ']'
 
@@ -178,7 +199,8 @@ def main():
              "  simp [Instrumentation.checkPlan, valid.target, unequal]",
              "#print axioms rejectChangedInstrumentation"]
     admitted, refused, instrumented_admitted, instrumented_refused = 0, 0, 0, 0
-    for path in [ROOT / "protocols/Admission.module", ROOT / "protocols/Delivery.module", *args.module]:
+    for path in [ROOT / "protocols/Admission.module", ROOT / "protocols/Delivery.module",
+                 ROOT / "protocols/Current.module", ROOT / "protocols/CallOnce.module", *args.module]:
         name, data = declaration(path)
         emitted = run([CESTA, "protocol", "plan", path, "Protocols"]).stdout
         (work / f"plan-{admitted}.sexp").write_text(emitted)
@@ -198,7 +220,8 @@ def main():
             refused += 1
         section = record[8]
         assert section[0] == 'Instrumentation'
-        assert section[1] == (data[7] if len(data) == 8 else [Sym('Checks')])
+        assert section[1] == clauses(data).get('Checks', [Sym('Checks')])
+        assert record[9:] == ([clauses(data)['ExitRequires']] if 'ExitRequires' in clauses(data) else [])
         assert section[2][0] == 'Target', 'shipped examples require complete validators'
         itarget = section[2][1]
         lines += [f'def checks{admitted} : List Instrumentation.Validator := ' + checks(data),

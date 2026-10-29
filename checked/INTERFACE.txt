@@ -30,6 +30,31 @@ defaults to 64; the generated C checks it against the target's size_t.
             (body (set total (wrap-add total (as u64 (at bytes index))))))
           (return total))))
 
+Compiler hints
+--------------
+
+Build a checked module with -DCESTA_CHECKED_OPTIMIZE=1 to enable the compiler
+hint layer, or pass --checked-hints to cesta build. The project option applies
+the mode to every target source, participates in incremental command changes,
+and is preserved in the exported Makefile. Without it the default is zero.
+The ordinary C export retains the hints. The switch must be
+set before including a generated checked header. Other values are rejected.
+GCC and Clang receive cold/noinline on the generated failure wrapper and
+alloc_size(1) on the declared byte allocator. Other C compilers receive the
+same ordinary declarations without these attributes.
+
+The failure wrapper calls the declared failure hook and never returns even
+if that hook returns. The allocator must supply the requested byte extent on
+success; it may return null. These hints do not add a nonnull, malloc,
+restrict, pure, const or alignment promise. A short exclusive borrow does not
+establish the whole-function precondition of restrict. Failure checks remain
+observable and are retained in both modes.
+
+test-checked-hints compares authored and exported builds in both modes under
+GCC and Clang, runs the existing ownership and trap controls with sanitizers,
+and independently checks the compiler's object-size knowledge. Hint emission
+does not imply a speedup on every programme.
+
 Types and interfaces
 --------------------
 

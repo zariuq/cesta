@@ -1,0 +1,27 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (include "view_bytes.h")
+    (ownership
+      (check-all)
+      (view cesta_read_bytes data len read)
+      (view cesta_write_bytes data len write)
+      (function packet_view (returns-borrow 0 bytes))
+      (foreign view_bytes_sum
+        (obligation "Checked byte implementation reads only within the validated view and retains no reference."))
+      (foreign view_bytes_fill
+        (obligation "Checked byte implementation writes only within the validated view and retains no reference."))
+      (foreign view_bytes_at_index
+        (obligation "Checked byte implementation checks the dynamic index before reading and retains no reference.")))
+    (typedef (struct Packet (uint8_t ([] bytes 8))) Packet)
+    (fn (static cesta_read_bytes) packet_view (((const Packet) (* packet)))
+      (return (compound cesta_read_bytes (= (. data) (-> packet bytes)) (= (. len) 8))))
+    (fn int main (void)
+      (var Packet packet (init 0))
+      (block
+        (var cesta_write_bytes writable (compound cesta_write_bytes (. packet bytes) 8))
+        (call view_bytes_fill writable 5)
+        (= ([] (. writable data) 2) 7))
+      (var cesta_read_bytes first (call packet_view (& packet)))
+      (var cesta_read_bytes second first)
+      (var uint64_t sum (+ (call view_bytes_sum first) (call view_bytes_sum second)))
+      (return (?: (== sum 84) 0 1)))))

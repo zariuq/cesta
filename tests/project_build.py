@@ -258,8 +258,22 @@ def main():
         assert "src/main.c" in files and "src/one.S" in files and "include/values.h" in files, files
         assert not [f for f in files if f.endswith(".c") and b"#line" in (exported / f).read_bytes()], files
         run(["make", "-s", "-j4", "-C", exported, "CC=" + compiler], project)
+        original_archive=project/"out/values/libvalues.a"
+        exported_archive=exported/"out/values/libvalues.a"
+        assert run(["ar","t",original_archive],project).stdout == run(["ar","t",exported_archive],project).stdout
         assert run([exported / "out/app/app"], exported).stdout == b"howdy 53\n"
         assert subprocess.run([exported / "out/bare/bare"], cwd=exported).returncode == 3
+
+        # Compare archive bytes with authored debug-line metadata disabled.
+        manifest=project/"cesta.project"
+        saved=manifest.read_text()
+        assert '"-g"' in saved
+        manifest.write_text(saved.replace('"-g"','"-g0"'))
+        run(build,project)
+        run([*build,"--export-c","exported"],project)
+        run(["make","-s","-j4","-C",exported,"CC="+compiler],project)
+        assert original_archive.read_bytes()==exported_archive.read_bytes(),(compiler,"archive export identity")
+        manifest.write_text(saved)
 
         # Errors name the authored unit by its project path.
         (project / "src/twice.cesta").write_text("(unit (fn int twice ((int x)) (return (+ x missing))))\n")

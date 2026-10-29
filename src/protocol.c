@@ -8,9 +8,10 @@
 CeText ce_builtin_TheoryModuleSyntax(void);
 
 typedef struct { CeText *items; size_t len; } Names;
+enum { PROTOCOL_OUTCOMES = 7 };
 typedef struct {
     CeText id, cname, kind;
-    Names requires, uses, proves;
+    Names requires, uses, proves, invalidates;
 } Hook;
 typedef struct {
     CeText id, acquire, release, transfer;
@@ -25,6 +26,8 @@ typedef struct {
     Validator *validators; size_t nvalidators;
     Names reasons;
     Names limits;
+    Names exit_facts[PROTOCOL_OUTCOMES];
+    const CeAtom *checks, *exits;
     bool checks_complete;
     CeAtom *written, *body, *target, *instrumented;
 } Protocol;
@@ -37,7 +40,7 @@ typedef struct {
 } Protocols;
 typedef struct { bool *facts, *owned; bool effect; } State;
 
-static const char *const outcomes[] = {
+static const char *const outcomes[PROTOCOL_OUTCOMES] = {
     "declined", "answered", "done", "raised", "suspended", "resource_failure", "engine_failure"
 };
 #define COUNT(a) (sizeof(a) / sizeof(*(a)))
@@ -129,7 +132,7 @@ static CeText guard_name(Protocols *ps, CeText name) {
     return (CeText){text,first+name.len+last};
 }
 static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeError *e) {
-    if (!form(a,"Protocol") || (a->len != 7 && a->len != 8) || a->items[1]->kind != CE_ATOM_TEXT ||
+    if (!form(a,"Protocol") || a->len < 7 || a->len > 9 || a->items[1]->kind != CE_ATOM_TEXT ||
         !ce_is(a->items[1]->text,"cesta-protocol/1"))
         return ce_error(e,a->offset,"expected (Protocol \"cesta-protocol/1\" (Context ...) (Hooks ...) (Resources ...) (Entry ...) (Body ...))");
     p->name = id; p->written = a;
@@ -151,7 +154,9 @@ static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeEr
     }
     for (size_t i = 0; i < p->nhooks; ++i) {
         const CeAtom *h = hs->items[i+1]; Hook *hook = &p->hooks[i];
-        if (!shape(h,"Hook",7,e) || !name(h->items[1],&hook->id,e) ||
+        if (!form(h,"Hook") || (h->len != 7 && h->len != 8))
+            return ce_error(e,h->offset,"Hook takes names, kind, Requires, Uses, Proves and optional Invalidates");
+        if (!name(h->items[1],&hook->id,e) ||
             !name(h->items[2],&hook->cname,e) || !callable_name(hook->cname,h->offset,e)) return false;
         for (size_t j = 0; j < i; ++j) if (ce_equal(p->hooks[j].id,hook->id))
             return ce_error(e,h->offset,"duplicate hook ID");
@@ -162,8 +167,10 @@ static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeEr
         if (!names(ps,h->items[4],"Requires",&hook->requires,e) ||
             !names(ps,h->items[5],"Uses",&hook->uses,e) || !names(ps,h->items[6],"Proves",&hook->proves,e) ||
             !distinct_cname(ps,&cnames,hook->cname,h->offset,e)) return false;
+        if (h->len == 8 && !names(ps,h->items[7],"Invalidates",&hook->invalidates,e)) return false;
         for (size_t j = 0; j < hook->requires.len; ++j) add(ps,&p->facts,hook->requires.items[j]);
         for (size_t j = 0; j < hook->proves.len; ++j) add(ps,&p->facts,hook->proves.items[j]);
+        for (size_t j = 0; j < hook->invalidates.len; ++j) add(ps,&p->facts,hook->invalidates.items[j]);
     }
     for (size_t i = 0; i < p->nresources; ++i) {
         const CeAtom *r = rs->items[i+1]; Resource *resource = &p->resources[i];
@@ -195,8 +202,29 @@ static bool read_protocol(Protocols *ps, CeText id, CeAtom *a, Protocol *p, CeEr
         for (size_t j = 0; j < p->hooks[i].uses.len; ++j)
             if (resource_index(p,p->hooks[i].uses.items[j]) == SIZE_MAX)
                 return ce_error(e,hs->items[i+1]->offset,"hook uses an undeclared resource");
-    if (a->len == 8) {
-        const CeAtom *checks = a->items[7];
+    for (size_t i = 7; i < a->len; ++i) {
+        const CeAtom *clause = a->items[i];
+        if (form(clause,"Checks") && !p->checks) p->checks = clause;
+        else if (form(clause,"ExitRequires") && !p->exits) {
+            p->exits = clause;
+            bool seen[PROTOCOL_OUTCOMES] = {0};
+            for (size_t j = 1; j < clause->len; ++j) {
+                const CeAtom *exit = clause->items[j];
+                if (exit->kind != CE_ATOM_LIST || !exit->len || exit->items[0]->kind != CE_ATOM_SYMBOL)
+                    return ce_error(e,exit->offset,"exit requirement names an outcome followed by facts");
+                size_t which = 0;
+                while (which < COUNT(outcomes) && !ce_is(exit->items[0]->text,outcomes[which])) ++which;
+                if (which == COUNT(outcomes)) return ce_error(e,exit->offset,"unknown exit outcome");
+                if (seen[which]) return ce_error(e,exit->offset,"duplicate exit outcome");
+                seen[which] = true;
+                if (!names(ps,exit,outcomes[which],&p->exit_facts[which],e)) return false;
+                for (size_t k = 0; k < p->exit_facts[which].len; ++k)
+                    add(ps,&p->facts,p->exit_facts[which].items[k]);
+            }
+        } else return ce_error(e,clause->offset,"unknown or duplicate protocol clause; expected Checks or ExitRequires");
+    }
+    if (p->checks) {
+        const CeAtom *checks = p->checks;
         if (!form(checks,"Checks")) return ce_error(e,checks->offset,"expected (Checks (Fact ID PREDICATE) (Own ID PREDICATE) ...)");
         p->nvalidators = checks->len-1;
         p->validators = ce_alloc(&ps->arena,p->nvalidators*sizeof(*p->validators));
@@ -276,9 +304,12 @@ static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s,
     CeText id = a->items[1]->text;
     if (form(a,"Return")) {
         if (a->len != 2) return ce_error(e,a->offset,"Return takes one outcome");
-        bool valid = false;
-        for (size_t i = 0; i < COUNT(outcomes); ++i) valid |= ce_is(id,outcomes[i]);
-        if (!valid) return ce_error(e,a->offset,"unknown protocol outcome");
+        size_t which = 0;
+        while (which < COUNT(outcomes) && !ce_is(id,outcomes[which])) ++which;
+        if (which == COUNT(outcomes)) return ce_error(e,a->offset,"unknown protocol outcome");
+        for (size_t i = 0; i < p->exit_facts[which].len; ++i)
+            if (!s.facts[find(p->facts,p->exit_facts[which].items[i])])
+                return ce_error(e,a->offset,"return requires an unestablished exit fact");
         for (size_t i = 0; i < p->nresources; ++i) if (s.owned[i])
             return ce_error(e,a->offset,"return leaves resource %.*s owned",(int)p->resources[i].id.len,p->resources[i].id.data);
         if (s.effect && ce_is(id,"declined")) return ce_error(e,a->offset,"cannot decline after an irreversible effect");
@@ -294,6 +325,9 @@ static bool check_body(Protocols *ps, Protocol *p, const CeAtom *a, State s,
             return ce_error(e,a->offset,"hook %.*s uses an unowned resource",(int)id.len,id.data);
         s.effect |= ce_is(hook->kind,"effect");
         State yes = state_copy(ps,p,s), no = state_copy(ps,p,s);
+        for (size_t i = 0; i < hook->invalidates.len; ++i)
+            yes.facts[find(p->facts,hook->invalidates.items[i])] =
+                no.facts[find(p->facts,hook->invalidates.items[i])] = false;
         for (size_t i = 0; i < hook->proves.len; ++i) yes.facts[find(p->facts,hook->proves.items[i])] = true;
         *target = node(ps,"IfCall",hook->cname,4);
         return check_body(ps,p,a->items[2],yes,loop,&(*target)->items[2],e) &&
@@ -389,12 +423,18 @@ static CeAtom *instrument_body(Protocols *ps, Protocol *p, const CeAtom *body, C
         }
         for (size_t i = p->nresources; i > 0; --i)
             next = validate(ps,p,"own",p->resources[i-1].id,false,next);
+        for (size_t i = 0; i < COUNT(outcomes); ++i)
+            if (ce_is(body->items[1]->text,outcomes[i]))
+                next = validate_names(ps,p,"fact",p->exit_facts[i],next);
         return next;
     }
     if (form(body,"Call")) {
         const Hook *h = &p->hooks[hook_index(p,body->items[1]->text)];
         State yes = state_copy(ps,p,state), no = state_copy(ps,p,state);
         yes.effect |= ce_is(h->kind,"effect"); no.effect = yes.effect;
+        for (size_t i = 0; i < h->invalidates.len; ++i)
+            yes.facts[find(p->facts,h->invalidates.items[i])] =
+                no.facts[find(p->facts,h->invalidates.items[i])] = false;
         for (size_t i = 0; i < h->proves.len; ++i) yes.facts[find(p->facts,h->proves.items[i])] = true;
         CeAtom *next = node(ps,"IfCall",h->cname,4);
         next->items[2] = instrument_body(ps,p,body->items[2],reply_key(ps,h->cname,true),yes,loop);
@@ -616,11 +656,13 @@ static void plans(const Protocols *ps, FILE *f) {
         fprintf(f,"(cesta-protocol-plan/1 %.*s",(int)p->name.len,p->name.data);
         for (size_t j = 2; j < 7; ++j) { fputc(' ',f); ce_atom_write(p->written->items[j],f); }
         fputs(" (Target ",f); ce_atom_write(p->target,f); fputs(") (Instrumentation ",f);
-        if (p->written->len == 8) ce_atom_write(p->written->items[7],f);
+        if (p->checks) ce_atom_write(p->checks,f);
         else fputs("(Checks)",f);
         if (p->checks_complete) { fputs(" (Target ",f); ce_atom_write(p->instrumented,f); fputc(')',f); }
         else fputs(" (Unavailable)",f);
-        fputs("))\n",f);
+        fputs(")",f);
+        if (p->exits) { fputc(' ',f); ce_atom_write(p->exits,f); }
+        fputs(")\n",f);
     }
 }
 bool ce_protocol_expand(CeArena *arena, const char *path, const char *theory,

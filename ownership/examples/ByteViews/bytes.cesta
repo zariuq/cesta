@@ -1,0 +1,26 @@
+(cesta checked-c/1
+  (module view_bytes)
+  (failure view_bytes_failure)
+  (fn at_index
+    (params (source read) (index usize))
+    (returns u8)
+    (effects)
+    (body
+      (require (lt index (len source)))
+      (return (at source index))))
+  (fn sum
+    (params (source read))
+    (returns u64)
+    (effects)
+    (body
+      (var total u64 (u64 0))
+      (for index source
+        (body (set total (add total (as u64 (at source index))))))
+      (return total)))
+  (fn fill
+    (params (destination write) (value u8))
+    (returns unit)
+    (effects)
+    (body
+      (for index destination (body (put destination index value)))
+      (return))))

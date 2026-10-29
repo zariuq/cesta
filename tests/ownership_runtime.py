@@ -26,6 +26,8 @@ void dispose(void *p) {
     if (p) { assert(live == 1); --live; ++releases; }
     free(p);
 }
+typedef struct { unsigned char *data; size_t len; } WriteView;
+void consume_buffer(WriteView buffer) { dispose(buffer.data); }
 extern int f(void);
 int main(void) {
     int result = f();
@@ -50,7 +52,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="ownership-runtime-",dir=ROOT/"build") as temporary:
         directory = Path(temporary)
         provider = directory/"provider.c"; provider.write_text(PROVIDER)
-        for name, expected in (("heap_move",7),("heap_borrow",7),("owned_argument",1),("owned_result",7)):
+        for name, expected in (("heap_move",7),("heap_borrow",7),("owned_argument",1),("owned_result",7),
+                               ("owning_view_move",7),("owning_view_borrow",7),("owning_view_transfer",1)):
             source, contract = POSITIVE[name]
             case = directory/name; case.mkdir()
             authored = case/"unit.cesta"; authored.write_text(document(source,contract))
@@ -87,7 +90,7 @@ def main():
                     checked([binary]); binaries.append(binary)
                 assert binaries[0].read_bytes() == binaries[1].read_bytes(),(authored.name,compiler)
     (ROOT/"build/ownership-runtime.json").write_text(json.dumps(records,indent=2)+"\n")
-    print(f"ownership runtime: {len(records)*3} heap executions and both structured examples; allocation success/failure, GCC/Clang, sanitizers; authored/exported/erased binaries agree")
+    print(f"ownership runtime: {len(records)*3} heap executions and all structured examples; allocation success/failure, GCC/Clang, sanitizers; authored/exported/erased binaries agree")
 
 
 if __name__ == "__main__":
