@@ -132,10 +132,10 @@ def pretty(x: S, indent=0, width=100) -> str:
     if len(prefix)+indent > width and lead > 1: lead=1; prefix='('+dumps(x[0])
     return prefix+''.join('\n'+' '*(indent+2)+pretty(a,indent+2,width) for a in x[lead:])+')'
 
-PRIMITIVES=dict(zip('char short int long float double signed unsigned _Complex __int128 __signed__'.split(),
-                    'Char Short Int Long Float Double Signed Unsigned Complex GNUInt128 GNUSigned'.split()))
-UNIQUE=dict(zip('void _Bool __auto_type _Float128 _Float32 _Float64 _Float32x _Float64x _Float128x __float128'.split(),
-               'Void Bool GNUAutoType GNUFloat128 GNUFloat32 GNUFloat64 GNUFloat32x GNUFloat64x GNUFloat128x GNUQuad'.split()))
+PRIMITIVES=dict(zip('char short int long float double signed unsigned _Complex __int128 __signed__ _Float16'.split(),
+                    'Char Short Int Long Float Double Signed Unsigned Complex GNUInt128 GNUSigned GNUFloat16'.split()))
+UNIQUE=dict(zip('void _Bool __auto_type _Float128 _Float32 _Float64 _Float32x _Float64x _Float128x __float128 __bf16'.split(),
+               'Void Bool GNUAutoType GNUFloat128 GNUFloat32 GNUFloat64 GNUFloat32x GNUFloat64x GNUFloat128x GNUQuad GNUBFloat16'.split()))
 QUALIFIERS=dict(zip('const restrict volatile _Atomic __const__ __const __volatile__ __volatile __restrict__ __restrict'.split(),
                    'Const Restrict Volatile AtomicQualifier GNUConst GNUConstPrefix GNUVolatile GNUVolatilePrefix GNURestrict GNURestrictPrefix'.split()))
 STORAGE=dict(zip('typedef extern static _Thread_local auto register __thread'.split(),

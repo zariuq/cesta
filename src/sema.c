@@ -224,7 +224,7 @@ static bool span(Spanner *s, const CeTree *t, size_t at, size_t *end) {
     *end = position;
     return true;
 }
-static bool sema_extents(CeSema *sema, const CeTree *root, const CeTokens *tokens, CeError *error) {
+bool ce_sema_extents(CeSema *sema, const CeTree *root, const CeTokens *tokens, CeError *error) {
     const CeGrammar *g = sema->grammar;
     Spanner s = {sema,tokens,error,calloc(g->nsymbols,sizeof(size_t)),calloc(g->nsymbols,sizeof(size_t))};
     /* A list's (:) production holds the literals between elements; its (:[])
@@ -331,7 +331,8 @@ static bool types_export(CeSema *sema, const CeTree *root, FILE *file) {
 static const unsigned arithmetic_kinds[] = {
     CE_T_BOOL, CE_T_CHAR, CE_T_SCHAR, CE_T_UCHAR, CE_T_SHORT, CE_T_USHORT, CE_T_INT, CE_T_UINT,
     CE_T_LONG, CE_T_ULONG, CE_T_LLONG, CE_T_ULLONG, CE_T_INT128, CE_T_UINT128, CE_T_FLOAT,
-    CE_T_DOUBLE, CE_T_LDOUBLE, CE_T_FLOAT32, CE_T_FLOAT64, CE_T_FLOAT128, CE_T_FLOAT32X, CE_T_FLOAT64X
+    CE_T_DOUBLE, CE_T_LDOUBLE, CE_T_FLOAT32, CE_T_FLOAT64, CE_T_FLOAT128, CE_T_FLOAT32X, CE_T_FLOAT64X,
+    CE_T_FLOAT16, CE_T_BFLOAT16
 };
 static CeType *arithmetic_type(CeSema *sema, unsigned code) {
     if (code < 64) return ce_type_basic(sema,code);
@@ -344,7 +345,9 @@ int ce_abi_tables_command(const CeAbi *abi) {
     size_t nk = sizeof(arithmetic_kinds)/sizeof(*arithmetic_kinds);
     /* the types this target has */
     for (size_t i = 0; i < nk; ++i) if (abi->size[arithmetic_kinds[i]]) codes[n++] = arithmetic_kinds[i];
-    for (size_t i = 0; i < nk; ++i) if (arithmetic_kinds[i] >= CE_T_FLOAT && abi->size[arithmetic_kinds[i]]) codes[n++] = 64+arithmetic_kinds[i];
+    /* GCC and Clang have no complex __bf16 */
+    for (size_t i = 0; i < nk; ++i) if (arithmetic_kinds[i] >= CE_T_FLOAT && arithmetic_kinds[i] != CE_T_BFLOAT16 &&
+                                        abi->size[arithmetic_kinds[i]]) codes[n++] = 64+arithmetic_kinds[i];
     printf("(abi-tables %s\n",sema.abi->name);
     for (size_t i = 0; i < nk; ++i) if (arithmetic_kinds[i] <= CE_T_UINT128 && abi->size[arithmetic_kinds[i]])
         printf(" (promote %u %u)\n",arithmetic_kinds[i],ce_promoted_kind(sema.abi,arithmetic_kinds[i],0));
@@ -813,7 +816,7 @@ int ce_sema_command(int argc, char **argv) {
     FILE *output = record_file ? record_file : stdout;
     if (!strcmp(argv[1],"bind")) { if (!ce_sema_bindings_export(&sema,output)) goto done; }
     else {
-        if (!sema_extents(&sema,tree,&tokens,&error) || !ce_elaborate(&sema,tree,&error)) goto done;
+        if (!ce_sema_extents(&sema,tree,&tokens,&error) || !ce_elaborate(&sema,tree,&error)) goto done;
         bool ok = !strcmp(argv[1],"types") ? types_export(&sema,tree,output) :
             !strcmp(argv[1],"explicit") ? explicit_export(&sema,tree,output) :
             !strcmp(argv[1],"census") ? census_export(&sema,tree,output) : probe_export(&sema,tree,output);

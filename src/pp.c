@@ -116,6 +116,7 @@ typedef struct {
     CeGrammar identifier_grammar;
     bool identifier_grammar_ready;
     bool clang, c11, markers, char_unsigned;
+    CeText predefined;
     char *compiler;
     char **probe;
     size_t nprobe;
@@ -1915,6 +1916,7 @@ static bool configure(PP *pp) {
     for (size_t i = 0; i+28 <= text.len; ++i)
         if (!memcmp(p+i,"#define __CHAR_UNSIGNED__ ",26)) { pp->char_unsigned = true; break; }
     char *defines = ce_alloc(&pp->arena,text.len+1); memcpy(defines,text.data,text.len); defines[text.len] = 0;
+    pp->predefined = (CeText){(unsigned char *)defines,text.len};
     char *verbose[] = {"-E","-v","-x","c","/dev/null"};
     CeText paths;
     bool ok = probe_text(pp,verbose,5,true,&paths,&scratch);
@@ -1953,7 +1955,8 @@ static bool configure(PP *pp) {
 
 static bool takes_argument(const char *a) {
     static const char *const options[] = {"-I","-D","-U","-include","-imacros","-isystem","-iquote","-idirafter",
-        "-o","-MF","-MT","-MQ","-x","-iprefix","-iwithprefix","-iwithprefixbefore","-isysroot","--sysroot","-target",NULL};
+        "-o","-MF","-MT","-MQ","-x","-iprefix","-iwithprefix","-iwithprefixbefore","-isysroot","--sysroot","-target",
+        "-dumpbase","-dumpbase-ext","-dumpdir",NULL};
     for (size_t i = 0; options[i]; ++i) if (!strcmp(a,options[i])) return true;
     return false;
 }
@@ -2066,6 +2069,7 @@ done:
     out->text = ce_text(&out->arena,text ? (unsigned char *)text : (unsigned char *)"",text ? text_len : 0);
     free(text);
     out->origins = pp.origins; out->len = pp.norigins; out->clang = pp.clang;
+    out->predefined = pp.predefined;
     return ok;
 }
 

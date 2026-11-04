@@ -17,11 +17,15 @@ INTEGER = {1: ".boolean", 2: ".signed (.standard .char)", 3: ".signed (.standard
            11: ".signed (.standard .longLong)", 12: ".unsigned (.standard .longLong)",
            13: ".signed (.extended .int128)", 14: ".unsigned (.extended .int128)"}
 REAL = {15: ".float", 16: ".double", 17: ".longDouble", 18: ".float32", 19: ".float64", 20: ".float128",
-        21: ".float32x", 22: ".float64x"}
+        21: ".float32x", 22: ".float64x", 23: ".float16", 24: ".bfloat16"}
 
-def arithmetic(code):
-    """Plain char (2) is signed char on this target: the ABI's char adapter."""
-    if code in INTEGER: return f"(.integer ({INTEGER[code]}))"
+def integer(code, char_signed=True):
+    if code == 2: return ".signed (.standard .char)" if char_signed else ".unsigned (.standard .char)"
+    return INTEGER[code]
+
+def arithmetic(code, char_signed=True):
+    """Adapt implementation-defined plain-char signedness into the C11 integer model."""
+    if code in INTEGER: return f"(.integer ({integer(code,char_signed)}))"
     if code in REAL: return f"(.real {REAL[code]})"
     if code - 64 in REAL: return f"(.complex {REAL[code - 64]})"
     raise ValueError(code)
@@ -35,8 +39,10 @@ def main():
     parser.add_argument("--project", type=Path, default=ROOT.parent / "Mettapedia/lean/mettapedia")
     parser.add_argument("--lean-memory-mb", type=int)
     args = parser.parse_args()
-    MODELS = [("lp64", "x86_64-sysv-lp64", "sysvFloating"), ("ilp32", "i386-sysv-ilp32", "sysvFloating"),
-              ("llp64", "x86_64-windows-llp64", "windowsFloating")]
+    MODELS = [("lp64", "x86_64-sysv-lp64", "lp64", "sysvFloating", True),
+              ("ilp32", "i386-sysv-ilp32", "ilp32", "sysvFloating", True),
+              ("llp64", "x86_64-windows-llp64", "llp64", "windowsFloating", True),
+              ("aapcs64", "aarch64-aapcs64-lp64", "lp64", "aapcs64Floating", False)]
     steps = sorted({tuple(map(int, line.split())) for line in args.steps.read_text().splitlines() if line.strip()})
     shapes = json.loads(args.records.read_text())
     code = ["""import Mettapedia.Languages.C11.ArithmeticConversions
@@ -47,25 +53,25 @@ set_option maxHeartbeats 0
 set_option Elab.async false
 namespace CestaTypeAdmission
 open Mettapedia.Languages.C11
-/-! Cesta's arithmetic tables for three data models, kernel-checked against the
-    C11 model. Plain `char` is signed on these targets and enters as `signed char`. -/"""]
+/-! Cesta's arithmetic tables for four data models, kernel-checked against the
+    C11 model. Plain `char` enters with each target's declared signedness. -/"""]
     audits, counts, digest = [], {}, hashlib.sha256()
-    for model, abi, floating in MODELS:
+    for model, abi, integer_profile, floating, char_signed in MODELS:
         tables = subprocess.run([str(args.binary), "abi-tables", "--abi=" + abi], stdout=subprocess.PIPE, check=True).stdout.decode()
         digest.update(tables.encode())
         promotions = [(int(a), int(b)) for a, b in re.findall(r"\(promote (\d+) (\d+)\)", tables)]
         usual = [(int(a), int(b), int(c)) for a, b, c in re.findall(r"\(usual (\d+) (\d+) (\d+)\)", tables)]
         codes = sorted({a for a, b, c in usual})
         counts[model] = (len(promotions), len(usual))
-        profile = f"(integerValueProfile .{model})"
+        profile = f"(integerValueProfile .{integer_profile})"
         code.append(f"def {model}Promotions : List (IntegerType IntegerExtension × IntegerType IntegerExtension) := [" +
-                    ", ".join(f"({INTEGER[a]}, {INTEGER[b]})" for a, b in promotions) + "]")
+                    ", ".join(f"({integer(a,char_signed)}, {integer(b,char_signed)})" for a, b in promotions) + "]")
         code.append(f"theorem {model}Promotions_checked :\n    {model}Promotions.all (fun row => promoteIntegerType {profile} row.1 == row.2) = true := by decide")
         code.append(f"def {model}Usual : List (ArithmeticType IntegerExtension × ArithmeticType IntegerExtension × ArithmeticType IntegerExtension) := [" +
-                    ", ".join(f"({arithmetic(a)}, {arithmetic(b)}, {arithmetic(c)})" for a, b, c in usual) + "]")
+                    ", ".join(f"({arithmetic(a,char_signed)}, {arithmetic(b,char_signed)}, {arithmetic(c,char_signed)})" for a, b, c in usual) + "]")
         code.append(f"theorem {model}Usual_checked :\n    {model}Usual.all (fun row => usualArithmeticType {profile} {floating} row.1 row.2.1 == row.2.2) = true := by decide")
         code.append(f"/-- The arithmetic types this target has. -/\n"
-                    f"def {model}Types : List (ArithmeticType IntegerExtension) := [" + ", ".join(arithmetic(c) for c in codes if c != 2) + "]")
+                    f"def {model}Types : List (ArithmeticType IntegerExtension) := [" + ", ".join(arithmetic(c,char_signed) for c in codes if c != 2) + "]")
         code.append(f"/-- Every pair of this target's arithmetic types has a checked row. -/\n"
                     f"theorem {model}Usual_complete :\n    {model}Types.all (fun a => {model}Types.all fun b =>\n"
                     f"      {model}Usual.any fun row => row.1 == a && row.2.1 == b) = true := by decide")

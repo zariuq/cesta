@@ -13,7 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGETS = [("x86_64-sysv-lp64", "x86_64-linux-gnu"), ("i386-sysv-ilp32", "i386-linux-gnu"),
-           ("x86_64-windows-llp64", "x86_64-pc-windows-msvc")]
+           ("x86_64-windows-llp64", "x86_64-pc-windows-msvc"),
+           ("aarch64-aapcs64-lp64", "aarch64-none-elf")]
 
 CASES = [
  # (name, source, valid)

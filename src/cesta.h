@@ -34,6 +34,9 @@ typedef struct CeAtom {
     CeText text;
     struct CeAtom **items;
     size_t len, offset;
+    /* A run of a parent list's items read as a list sort, not a list
+       written in the source: its first item is not a head. */
+    bool spliced;
 } CeAtom;
 CeAtom *ce_atom_new(CeArena *arena, unsigned kind, CeText text, size_t len);
 bool ce_atom_read(CeArena *arena, CeText source, CeAtom **out, CeError *error);

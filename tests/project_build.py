@@ -131,6 +131,9 @@ def dependency_controls(compiler, project):
         (text.replace("(depends values)", "(depends absent)"), b"undeclared target"),
         (text.replace("(kind archive)", "(kind archive) (depends app)"), b"dependency cycle"),
         (text.replace("(kind archive)", '(kind archive) (output "./out/app/app")'), b"distinct output"),
+        (text.replace("(kind archive)", '(kind archive) (output "./out/app/obj")'), b"object directory"),
+        (text.replace("(kind archive)", '(kind archive) (output "out/values/obj/lib.a")'), b"object directory"),
+        (text.replace("(kind archive)", '(kind archive) (output "./out/app")'), b"build directory"),
     ):
         manifest.write_text(mutation)
         result = run(build, project, success=False)
@@ -208,6 +211,62 @@ def response_controls(compiler, project):
     refused = run(command, project, success=False)
     assert b"recursive compiler response file" in refused.stderr
     print(compiler + ": nested response dependencies, inferred archive edges, exports, missing inputs and cycles passed", flush=True)
+
+
+def sharing_controls(compiler, project):
+    """Identical compile identities share one object without changing target layout."""
+    project.mkdir(parents=True)
+    (project / "common.c").write_text("int shared_value(void){return 7;}\n")
+    manifest = project / "cesta.project"
+    text = '''(cesta project/1 (out "out")
+      (profile hosted (flags "-std=c11" "-O2" "-g0" "-Wall" "-Werror"))
+      (target first (profile hosted) (kind archive) (sources "common.c"))
+      (target second (profile hosted) (kind archive) (sources "common.c")))'''
+    manifest.write_text(text)
+    command = [BINARY,"build","--cc",compiler,"-j4"]
+    result=run(command,project)
+    assert summary(result.stderr,"first")[:2]==(1,0),result.stderr
+    assert summary(result.stderr,"second")[:2]==(0,1),result.stderr
+    first=project/"out/first/obj/common.c.o";second=project/"out/second/obj/common.c.o"
+    assert first.stat().st_ino==second.stat().st_ino
+    shared=list((project/"out/.objects").rglob("common.c.o"));assert len(shared)==1,shared
+    assert first.stat().st_ino==shared[0].stat().st_ino
+    first_archive=project/"out/first/libfirst.a";second_archive=project/"out/second/libsecond.a"
+    assert first_archive.read_bytes()==second_archive.read_bytes()
+    exported=project/"exported";run([*command,"--export-c",exported],project)
+    run(["make","-s","-j4","-C",exported,"CC="+compiler],project)
+    exported_first=exported/"out/first/obj/common.c.o";exported_second=exported/"out/second/obj/common.c.o"
+    assert exported_first.stat().st_ino==exported_second.stat().st_ino
+    assert (exported/"out/first/libfirst.a").read_bytes()==first_archive.read_bytes()
+    assert (exported/"out/second/libsecond.a").read_bytes()==second_archive.read_bytes()
+    manifest.write_text(text.replace('(target second (profile hosted)',
+                                     '(target second (profile hosted) (define "SECOND=1")'))
+    result=run([*command,"second"],project)
+    assert summary(result.stderr,"second")[:2]==(1,0),result.stderr
+    assert len(list((project/"out/.objects").rglob("common.c.o")))==2
+    manifest.write_text(text)
+    wrapper=project/(compiler+"-wrapper")
+    wrapper.write_text("#!/bin/sh\nexec "+shutil.which(compiler)+' "$@"\n');wrapper.chmod(0o755)
+    wrapped=[BINARY,"build","--cc",wrapper,"-j4","first"]
+    result=run(wrapped,project);assert summary(result.stderr,"first")[:2]==(1,0),result.stderr
+    before=len(list((project/"out/.objects").rglob("common.c.o")))
+    time.sleep(.01);wrapper.write_text("#!/bin/sh\n# changed tool identity\nexec "+shutil.which(compiler)+' "$@"\n');wrapper.chmod(0o755)
+    result=run(wrapped,project);assert summary(result.stderr,"first")[:2]==(1,0),result.stderr
+    assert len(list((project/"out/.objects").rglob("common.c.o")))==before+1
+    # Switching object provenance must rebuild an archive even when the
+    # restored compiler's cached object is older and the ar command is equal.
+    other='clang' if compiler=='gcc' else 'gcc'
+    other_command=[BINARY,"build","--cc",other,"-j4","first"]
+    other_result=run(other_command,project);assert summary(other_result.stderr,"first")[2]=='archived',other_result.stderr
+    other_archive=first_archive.read_bytes()
+    restored=run([*command,"first"],project);assert summary(restored.stderr,"first")[2]=='archived',restored.stderr
+    assert first_archive.read_bytes()!=other_archive
+    assert first_archive.read_bytes()==second_archive.read_bytes()
+    manifest.write_text(text.replace('(target second (profile hosted) (kind archive)',
+                                     '(target second (profile hosted) (kind archive) (output "out/.objects/bad.a")'))
+    refused=run(command,project,success=False)
+    assert b"shared object directory" in refused.stderr,refused.stderr
+    print(compiler+": identical compile identities share one native/exported object; flag and tool changes split the cache",flush=True)
 
 
 def main():
@@ -294,6 +353,7 @@ def main():
         dependency_controls(compiler, project / "dependencies")
         freestanding_macro(compiler, project / "macro-pie")
         response_controls(compiler, project / "response-inputs")
+        sharing_controls(compiler, project / "sharing")
     (WORK / "summary.json").write_text(json.dumps({"records": records}, indent=2) + "\n")
 
 

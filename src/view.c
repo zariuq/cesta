@@ -927,7 +927,7 @@ static bool expand_atom(void *context, const CeAtom *atom, int sort, int parent,
     Expansion *expansion = context; const CeViewProfile *profile = expansion->profile;
     const CeGrammar *g = profile->grammar;
     if (depth > 4096) return ce_error(error,atom->offset,"presentation nesting exceeds decoder stack depth");
-    if (expansion->extension) {
+    if (expansion->extension && !atom->spliced) {
         unsigned result = expansion->extension(expansion->extension_context,atom,sort,parent,
             arena,out,expand_atom,context,error,depth);
         if (result == CE_EXTENSION_ERROR) return false;
@@ -1004,7 +1004,8 @@ static bool expand_atom(void *context, const CeAtom *atom, int sort, int parent,
         else if (selected->shape == CE_VIEW_PASS || selected->shape == CE_VIEW_LEXICAL) argument = atom;
         else if ((selected->splice || (selected->dotted && atom->len-prefix > selected->nfields)) && i+1 == selected->arity) {
             list.len = atom->len-prefix-selected->nfields+1;
-            list.items = atom->items+prefix+selected->nfields-1-selected->suffix; argument = &list;
+            list.items = atom->items+prefix+selected->nfields-1-selected->suffix;
+            list.spliced = selected->splice; argument = &list;
         } else {
             size_t position = 0;
             while (surface_slot(selected,position) != i) ++position;

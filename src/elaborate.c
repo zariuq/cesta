@@ -203,7 +203,7 @@ static CeType *apply_mode(Elab *e, CeType *t, const Attributes *a, const CeTree 
 /* ---- declaration specifiers (§6.7.1–6.7.5) --------------------------------- */
 
 typedef struct {
-    unsigned chars, shorts, ints, longs, floats, doubles, signeds, unsigneds, complexes, int128s;
+    unsigned chars, shorts, ints, longs, floats, doubles, signeds, unsigneds, complexes, int128s, float16s;
     unsigned qualifiers;
     CeType *unique;
     const CeTree *at;
@@ -297,6 +297,12 @@ static bool specifier_word(Elab *e, const CeTree *t, Words *w, Spec *s) {
     case CE_K_GNUFloat32x: w->unique = basic(e,CE_T_FLOAT32X); return true;
     case CE_K_GNUFloat64x: w->unique = basic(e,CE_T_FLOAT64X); return true;
     case CE_K_GNUFloat128x: return fail(e,t,"_Float128x is not available on this target");
+    case CE_K_GNUFloat16:
+        if (!e->sema->abi->size[CE_T_FLOAT16]) return fail(e,t,"_Float16 is not available on this target");
+        ++w->float16s; return true;
+    case CE_K_GNUBFloat16:
+        if (!e->sema->abi->size[CE_T_BFLOAT16]) return fail(e,t,"__bf16 is not available on this target");
+        w->unique = basic(e,CE_T_BFLOAT16); return true;
     case CE_K_AtomicType: {
         CeType *type; if (!type_name(e,t->children[0],&type)) return false;
         w->unique = ce_type_qualified(e->sema,type,CE_Q_ATOMIC); return true;
@@ -341,12 +347,17 @@ static bool specifier_word(Elab *e, const CeTree *t, Words *w, Spec *s) {
 static bool word_type(Elab *e, const Words *w, const CeTree *at, CeType **out) {
     if (w->unique) {
         if (w->chars || w->shorts || w->ints || w->longs || w->floats || w->doubles || w->signeds ||
-            w->unsigneds || w->complexes || w->int128s) return fail(e,at,"invalid type specifier combination");
+            w->unsigneds || w->complexes || w->int128s || w->float16s) return fail(e,at,"invalid type specifier combination");
         *out = ce_type_qualified(e->sema,w->unique,w->qualifiers); return true;
     }
     unsigned kind;
     bool is_unsigned = w->unsigneds > 0, is_signed = w->signeds > 0;
-    if (w->floats || w->doubles) {
+    if (w->float16s) {
+        /* _Float16 stands alone or with _Complex. */
+        if (w->float16s > 1 || w->chars || w->shorts || w->ints || w->longs || w->floats || w->doubles ||
+            w->signeds || w->unsigneds || w->int128s) return fail(e,at,"invalid type specifier combination");
+        kind = CE_T_FLOAT16;
+    } else if (w->floats || w->doubles) {
         kind = w->floats ? CE_T_FLOAT : w->longs ? CE_T_LDOUBLE : CE_T_DOUBLE;
     } else if (w->chars) kind = is_unsigned ? CE_T_UCHAR : is_signed ? CE_T_SCHAR : CE_T_CHAR;
     else if (w->shorts) kind = is_unsigned ? CE_T_USHORT : CE_T_SHORT;
@@ -680,6 +691,10 @@ static void layout(Elab *e, CeRecord *r, bool is_union, Pending *items, size_t n
             }
             if (m.bit_width == 0) {
                 start = round_up(start,(unsigned long long)type_align*8);
+                /* AAPCS64 zero-width bit-fields impose their base type's
+                   alignment on the containing record, including first. */
+                if (e->sema->abi->record_layout == CE_RECORD_AAPCS64 && type_align > align)
+                    align = type_align;
             } else {
                 if (!packed && unit && (start % ((unsigned long long)type_align*8)) + m.bit_width > unit)
                     start = round_up(start,(unsigned long long)type_align*8);
@@ -1079,7 +1094,10 @@ static bool floating_constant(Elab *e, const CeTree *node, CeExpr **out) {
     bool hex = s.len > 1 && s.data[0] == '0' && (s.data[1] == 'x' || s.data[1] == 'X');
     unsigned kind = CE_T_DOUBLE;
     unsigned c = s.data[s.len-1];
-    if (c == 'f' || c == 'F') kind = CE_T_FLOAT;
+    /* No unsuffixed constant ends in f16: a hexadecimal one ends in exponent digits. */
+    if (s.len > 3 && (s.data[s.len-3] == 'f' || s.data[s.len-3] == 'F') && s.data[s.len-2] == '1' && c == '6')
+        kind = CE_T_FLOAT16;
+    else if (c == 'f' || c == 'F') kind = CE_T_FLOAT;
     else if (c == 'l' || c == 'L') kind = CE_T_LDOUBLE;
     (void)hex;
     *out = new_expr(e,node,basic(e,kind),CE_RVALUE);
@@ -2470,6 +2488,22 @@ static bool statement(Elab *e, const CeTree *t) {
 
 static void builtin_types(Elab *e) {
     CeSema *s = e->sema;
+    if (s->abi == &ce_abi_aarch64_aapcs64) {
+        CeEntity *tag = ce_sema_entity(s,CE_ENTITY_STRUCT,CE_SPACE_TAG,ce_cstr(&s->arena,"__va_list"),NULL);
+        tag->record = ce_alloc(&s->arena,sizeof(*tag->record));
+        *tag->record = (CeRecord){.size=32,.align=8,.complete=true};
+        CeType *pointer = ce_type_pointer(s,basic(e,CE_T_VOID)), *integer = basic(e,CE_T_INT);
+        tag->record->members = ce_alloc(&s->arena,5*sizeof(CeMember));
+        const char *names[] = {"__stack","__gr_top","__vr_top","__gr_offs","__vr_offs"};
+        CeType *types[] = {pointer,pointer,pointer,integer,integer};
+        unsigned long long offsets[] = {0,8,16,24,28};
+        for (size_t i = 0; i < 5; ++i)
+            tag->record->members[tag->record->nmembers++] =
+                (CeMember){.name=ce_cstr(&s->arena,names[i]),.type=types[i],.offset=offsets[i]};
+        tag->builtin_tag = true;
+        CeType *record = ce_type_new(s,CE_T_STRUCT); record->tag = tag;
+        s->va_list_type = record; return;
+    }
     if (s->abi != &ce_abi_x86_64_sysv) {
         s->va_list_type = ce_type_pointer(s,basic(e,CE_T_CHAR)); return;
     }

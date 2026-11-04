@@ -21,9 +21,15 @@ Example:
 
 The representation and calling convention remain C's. Ownership bookkeeping
 is erased. Bounds or arithmetic checks from checked-c/1 are a separate feature.
-The current native ownership profile uses x86_64 SysV sizes and alignment;
-generated C carries a static assertion for that profile. The mathematical
+The native ownership profiles cover x86_64 SysV and AArch64 AAPCS64 LP64;
+generated C carries target-specific static assertions for the selected profile. The mathematical
 range and permission laws do not depend on a particular word size or ABI.
+
+Certificate generation can stage individual function checks separately from
+whole-module admission. A staged receipt reports module_admitted=false;
+function certificates alone do not establish module admission. Resumption
+reuses certificates only when their source, plan, checker and Lean dependencies
+match, then checks the assembled module and reports module_admitted=true.
 
 BORROWING
 
@@ -31,6 +37,18 @@ Pointer parameters borrow a complete pointee for the call. A pointer to const
 borrows for reading; other pointers borrow exclusively. Passing two overlapping
 exclusive arguments, or a shared and exclusive argument that overlap, fails.
 Every call needs a checked body or an explicit foreign contract.
+
+Checked switches accept grouped case/default labels sharing one body. Distinct
+arms must not fall through into each other; the final arm may end normally.
+Loop breaks inside an arm remain loop exits, and switch breaks exit that arm.
+
+Every loop backedge must preserve its ownership and non-null entry facts.
+The for-step is checked on continue paths as well as ordinary backedges.
+Pointer guards are evaluated and refined on each iteration. A nullable entry
+with a fresh guard can therefore remain valid while a non-null fact that the
+body destroys is refused. Condition-false exits and break exits carry their
+own resulting facts to the code following the loop; a break cannot weaken the
+invariant used to check a continuing path.
 
 A local pointer creates a lexical loan. A reborrow suspends its parent's
 overlapping range. Distinct record fields can be used independently. A parent
@@ -48,6 +66,12 @@ a parameter cannot turn a local pointer into a valid return. A member path
 narrows the caller's loan to that subobject. An unknown array index borrows
 the whole inline array conservatively. Constant subscripts are range checked.
 Dynamic subscripting through a raw pointer needs a checked bounded view.
+
+A complete plain structure returned by value supports direct member reads,
+including nested value members: make_result().ready and make_result().inner.tag.
+The producer is checked once, including its argument loans and call effects.
+Reference-bearing records, opaque capabilities and temporary array projections
+do not use this rule; their lifetimes and release authority remain explicit.
 
 A borrowed pointer result promises an origin, not an exact returned address.
 The caller conservatively retains the declared footprint; it cannot infer a
@@ -104,8 +128,21 @@ fields keep the referent alive; owning fields move its release authority.
 Moving an owning record consumes its owning fields, and an unreleased field
 prevents destruction of the containing allocation. Shared reference copies
 keep the referent's lifetime rather than the lifetime of an intermediate copy.
-Inline nested records use their own declarations. Reference-bearing arrays
-require element contracts and are currently refused.
+Inline nested records use their own declarations. Inline arrays of declared
+reference records apply those declarations pointwise, using the C array extent.
+Positional element initializers and zero initialization are checked for every
+element. Copying a containing owning record moves each element's release
+authority; a second move is refused. Constant element projections preserve
+their precise field ranges. Borrowing an unknown element conservatively
+suspends overlapping access to the whole array. A direct unknown-index read of
+a shared reference field checks every element for a common referent footprint,
+or a static origin. It retains the referent's lifetime when the containing array
+goes out of scope. The check does not invent per-index non-null facts; nullable
+unknown-index reads retain nullability. Owning or exclusive field extraction,
+ambiguous origins and unknown-index reference-field mutation remain refused.
+Arrays of bare pointers need their own element interface and remain outside
+this rule. Native ownership does not discharge dynamic numeric bounds: retain
+the appropriate explicit guards or use checked bounded byte operations.
 
 Calls carry the field permissions as well as the containing record's loan.
 A const record parameter lends its fields for reading. Relational field
@@ -291,3 +328,31 @@ between a borrow checker and an unsafe aliasing semantics. This implementation
 does not claim to implement or prove any of those complete systems. Mezzo's
 field permissions, Cyclone's separation of regions from allocation policy and
 Cogent's explicit refinement boundary inform this compositional design.
+
+ANALYSIS PRECISION
+
+Branch and loop joins currently require compatible ownership, reference
+origins and live loans. A future precision extension is a bounded domain of
+guarded alternatives, retaining which origin/permission holds under each
+stable predicate. This is planned analysis work, not an admitted construct.
+
+For example, choosing p=&a under g and p=&b under !g can justify writing the
+other object under the same unchanged guard. Changing g, mutating a predicate's
+dependencies through an alias, or revoking a supporting grant must destroy that
+correlation before reuse. Guard identity therefore includes dependency versions,
+not just source spelling. A domain limit must lose precision conservatively;
+it cannot discard feasible executions or infer their impossibility.
+
+Admission requires a concrete interpretation and sound transfer/join rules,
+then actual-plan integration. Controls must accept stable correlated disjoint
+access and refuse overlapping access after guard mutation, dangling branches,
+duplicated ownership and stale authority. Bounds, protocol facts and compiler
+hints must retain their own preservation laws and native assumptions.
+
+SWITCH EXITS
+
+A switch containing a default label emits switch-total: every admitted arm is
+possible, without an invented no-match path. Returning arms remain terminal;
+break arms resume after the switch. Without default, the no-match path remains.
+Nested switch and loop exits retain their own target. These are ownership-plan
+control-flow facts, not a functional-correctness proof of the C implementation.

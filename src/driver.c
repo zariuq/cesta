@@ -4,6 +4,7 @@
 #include "native.h"
 #include "diagnose.h"
 #include "ownership.h"
+#include "sema.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -28,7 +29,8 @@ static bool suffix(const char *text, const char *end) {
 static bool option_value(const char *option) {
     const char *names[] = {"-o","-I","-L","-l","-D","-U","-MF","-MT","-MQ","-x","-include",
         "-imacros","-isystem","-iquote","-idirafter","-iprefix","-iwithprefix","-iwithprefixbefore",
-        "-isysroot","--sysroot","-target","--target","-Xclang","-Xpreprocessor","-Xassembler","-Xlinker","-B"};
+        "-isysroot","--sysroot","-target","--target","-Xclang","-Xpreprocessor","-Xassembler","-Xlinker","-B",
+        "-dumpbase","-dumpbase-ext","-dumpdir"};
     for (size_t i = 0; i < sizeof(names)/sizeof(*names); ++i) if (!strcmp(option,names[i])) return true;
     return false;
 }
@@ -880,11 +882,66 @@ static const char *generated_beside(const char *output, const char *dependency, 
     return "output";
 }
 
+/* An opt-in reader census does not rewrite plain C or change the native
+   compiler's status. Its preprocessing context is the compile command's. */
+static void read_warnings(size_t n, char **arguments, bool gnu) {
+    for (size_t i = 1; i < n; ++i) {
+        if (option_value(arguments[i]) && i+1 < n) { ++i; continue; }
+        if (!strcmp(arguments[i],"-E") || !strcmp(arguments[i],"-M") || !strcmp(arguments[i],"-MM")) return;
+    }
+    for (size_t i = 1; i < n; ++i) {
+        if (option_value(arguments[i]) && i+1 < n) { ++i; continue; }
+        if (!suffix(arguments[i],".c")) continue;
+        CeArena arena = {0}; CeGrammar grammar = {0}; CeError error = {{0},0};
+        CePPResult pp = {0}; CeDFA dfa = {0}; CeLR lr = {0};
+        CeTokens tokens = {0}; CeForest forest = {.root=-1};
+        CeSema sema = {0}; bool sema_ready = false; CeTree *tree = NULL;
+        char **flags = ce_alloc(&arena,(n+4)*sizeof(*flags)); size_t k = 0;
+        flags[k++] = "--cc"; flags[k++] = arguments[0];
+        for (size_t j = 1; j < n; ++j) {
+            const char *a = arguments[j];
+            if (!strcmp(a,"-o") || !strcmp(a,"-MF") || !strcmp(a,"-MT") || !strcmp(a,"-MQ") ||
+                !strcmp(a,"-L") || !strcmp(a,"-l") || !strcmp(a,"-Xlinker")) { if (j+1 < n) ++j; continue; }
+            if (a[0] != '-' || !strcmp(a,"--") || !strncmp(a,"-Wl,",4)) continue;
+            flags[k++] = arguments[j];
+            if (option_value(a) && j+1 < n) flags[k++] = arguments[++j];
+        }
+        flags[k++] = arguments[i];
+        CeText ce_builtin_CPPGNUGrammar(void);
+        bool ok = ce_pp_run(ce_builtin_CPPGNUGrammar(),(int)k,flags,false,&pp,&error) &&
+            ce_builtin_dialect(&grammar,gnu,pp.clang,&error) &&
+            ce_dfa_prepare(&grammar,&dfa,&error) && ce_lr_prepare(&grammar,grammar.entries[0],&lr,&error) &&
+            ce_dfa_lex(&grammar,&dfa,pp.text,&tokens,&error) &&
+            ce_lr_parse(&grammar,&lr,&tokens,&forest,&error) &&
+            ce_tree_from_forest(&grammar,&forest,&tokens,&arena,&tree,&error);
+        const CeAbi *abi = ok ? ce_abi_predefined((const char *)pp.predefined.data) : NULL;
+        if (ok && !abi) ok = ce_error(&error,0,"type census has no ABI model for the selected compiler target");
+        if (ok) {
+            sema_ready = ce_sema_init(&sema,&grammar,pp.text,&error);
+            sema.clang = pp.clang; sema.abi = abi;
+            ok = sema_ready && ce_bind(&sema,tree,&error) &&
+                ce_sema_extents(&sema,tree,&tokens,&error) && ce_elaborate(&sema,tree,&error);
+        }
+        if (ok) fprintf(stderr,"cesta cc: read: %s: syntax and types admitted (%s)\n",arguments[i],abi->name);
+        else {
+            fprintf(stderr,"cesta cc: warning: reader did not admit %s: %s (native compilation continues)\n",
+                    arguments[i],error.message);
+            /* Origins include headers and macros, rather than a flattened TU offset. */
+            if (pp.text.len) ce_pp_diagnostic(stderr,&pp,&error);
+        }
+        ce_forest_free(&forest); ce_tokens_free(&tokens); ce_lr_free(&lr); ce_dfa_free(&dfa);
+        if (sema_ready) ce_sema_free(&sema);
+        ce_grammar_free(&grammar); ce_pp_result_free(&pp); ce_arena_free(&arena);
+    }
+}
+
 int ce_cc(int argc, char **argv) {
     CeArena arena = {0}; CeGrammar g = {0}; CeError error = {{0},0};
     ResponseArgs expanded = {.arena=&arena}; CeError response_error = {{0},0}; bool responses_ok = true;
     for (int i = 0; i < argc && responses_ok; ++i) responses_ok = response_expand(&expanded,argv[i],NULL,&response_error);
-    if (compact_arguments(expanded.len,expanded.values) || compact_arguments((size_t)argc,argv)) {
+    bool reader = false;
+    for (size_t i = 0; i < expanded.len; ++i) reader |= !strcmp(expanded.values[i],"--read-warnings");
+    if (reader || compact_arguments(expanded.len,expanded.values) || compact_arguments((size_t)argc,argv)) {
         if (!responses_ok || expanded.len > INT_MAX) {
             fprintf(stderr,"cesta cc: %s\n",responses_ok ? "too many compiler arguments" : response_error.message);
             free(expanded.values); ce_arena_free(&arena); return 1;
@@ -918,6 +975,7 @@ int ce_cc(int argc, char **argv) {
             if (++i == argc) { ce_error(&error,0,"--presentation requires a versioned key"); goto failed; }
             presentation = argv[i]; continue;
         }
+        if (!after_options && !strcmp(argv[i],"--read-warnings")) continue;
         size_t at = n; arguments[n++] = argv[i];
         if (!after_options && !strcmp(argv[i],"--")) { after_options = true; continue; }
         if (!after_options && !strncmp(argv[i],"-std=",5)) {
@@ -944,6 +1002,7 @@ int ce_cc(int argc, char **argv) {
         }
     }
     arguments[0] = (char *)compiler;
+    if (reader) read_warnings(n,arguments,gnu);
     char **generated_sources = ce_alloc(&arena,sexprs*sizeof(*generated_sources));
     char **original_sources = ce_alloc(&arena,sexprs*sizeof(*original_sources)); size_t source_count = 0;
     if (sexprs) {

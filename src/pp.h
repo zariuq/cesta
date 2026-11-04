@@ -85,6 +85,7 @@ typedef struct { const char *file; bool system; } CePPDependency;
 typedef struct {
     CeArena arena;                    /* owns the text, the origins and their names */
     CeText text;
+    CeText predefined;                 /* selected compiler/target's predefined macros */
     CePPOrigin *origins;
     size_t len;
     bool clang;                       /* the compiler's dialect */

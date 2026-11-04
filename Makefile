@@ -90,6 +90,8 @@ test-one-language: build/cesta
 .PHONY: test-project-build
 test-project-build: build/cesta
 	python3 -B tests/project_build.py
+	python3 -B tests/project_generators.py
+	python3 -B tests/read_warnings.py
 
 
 .PHONY: test-macro-engine
@@ -279,6 +281,7 @@ test-presentation-semantics: build/cesta
 test-semantics: build/cesta
 	python3 -B tests/semantic_controls.py
 	python3 -B tests/conversion_boundaries.py
+	python3 -B tests/aarch64_abi.py
 
 
 test-semantic-corpora: build/cesta
@@ -323,7 +326,10 @@ test-provenance-core: build/cesta
 	python3 -B tests/provenance_controls.py
 
 
-.PHONY: test-gnu-extensions
+.PHONY: test-gnu-extensions test-half-floats
+test-half-floats: build/cesta
+	python3 -B tests/half_floats.py
+
 test-gnu-extensions: build/cesta
 	python3 -B tests/gnu_extensions.py
 
@@ -419,7 +425,7 @@ test-table-admission: build/cesta test-table-model
 test-operation-protocol: build/cesta test-operation-model
 	python3 -B tests/operation_protocol.py $(OPERATION_PROTOCOL_TEST_FLAGS)
 
-.PHONY: test-protocols test-protocol-model test-protocol-admission test-protocol-loops test-protocol-loop-admission test-protocol-certificates test-protocol-call-once
+.PHONY: test-protocols test-protocol-model test-protocol-admission test-protocol-loops test-protocol-loop-admission test-protocol-certificates test-protocol-call-once test-protocol-bound-resources
 test-protocols: build/cesta
 	python3 -B tests/protocols.py
 
@@ -431,6 +437,9 @@ test-protocol-certificates: build/cesta
 
 test-protocol-call-once: build/cesta
 	python3 -B tests/protocol_call_once.py
+
+test-protocol-bound-resources: build/cesta test-protocol-model
+	python3 -B tests/protocol_bound_resources.py
 
 test-protocol-loop-admission: build/cesta test-protocol-model
 	python3 -B tests/protocol_loop_admission.py $(PROTOCOL_ADMISSION_TEST_FLAGS)
@@ -480,7 +489,7 @@ CHECK_GATES := test-tiers test-foundation test-source-core test-pp-core test-qua
 	test-unicode-names test-source-driver test-driver test-macro-prescan test-macro-definition-ports \
 	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges test-tables test-protocols test-protocol-loops \
 	test-checked-core test-checked-libraries
-TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-ownership-core test-ownership-runtime test-ownership-views test-checked-hints test-protocol-certificates test-protocol-call-once \
+TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-half-floats test-ownership-core test-ownership-arrays test-ownership-nullable-loops test-ownership-switch test-ownership-runtime test-ownership-views test-checked-hints test-protocol-certificates test-protocol-call-once \
 	test-checked-imports \
 	test-native-authoring test-one-language test-project-build test-macro-engine test-macro-native-names test-macro-types test-macro-narrowing \
 	test-macro-worklists test-macro-sizes test-macro-probes test-provenance-core test-c-printer test-examples \
@@ -493,15 +502,33 @@ QUALIFY_GATES := $(TEST_GATES) test-corpora test-c11parser test-lean test-macro-
 	test-source test-export-counters-cetta test-export-admission test-layout-admission test-layout-cetta \
 	test-layout-sanitizers test-layout-bridge test-layout-model test-operation-audit test-operation-model \
 	test-operations test-operation-proposal test-table-model test-table-admission test-operation-protocol \
-	test-protocol-model test-protocol-admission test-protocol-loop-admission test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated \
-	test-ownership-model test-ownership-admission test-ownership-views-admission
+	test-protocol-model test-protocol-admission test-protocol-loop-admission test-protocol-bound-resources test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated \
+	test-ownership-model test-ownership-admission test-ownership-views-admission test-ownership-staging test-ownership-switch-exhaustive test-ownership-arrays-admission test-ownership-nullable-loops-admission
 
-.PHONY: test-ownership-smoke test-ownership-core test-ownership-runtime test-ownership-model test-ownership-admission test-ownership-views test-ownership-views-admission
+.PHONY: test-ownership-smoke test-ownership-core test-ownership-switch test-ownership-runtime test-ownership-model test-ownership-admission test-ownership-views test-ownership-views-admission test-ownership-staging
 test-ownership-smoke: build/cesta
 	python3 -B tests/ownership_core.py --quick --output build/ownership-smoke.json
 
 test-ownership-core: build/cesta
 	python3 -B tests/ownership_core.py
+
+.PHONY: test-ownership-arrays
+test-ownership-arrays: build/cesta
+	python3 -B tests/ownership_arrays.py --cesta build/cesta --runtime
+
+.PHONY: test-ownership-nullable-loops
+test-ownership-nullable-loops: build/cesta
+	python3 -B tests/ownership_nullable_loops.py --cesta build/cesta
+
+.PHONY: test-ownership-arrays-admission test-ownership-nullable-loops-admission
+test-ownership-arrays-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_arrays.py --cesta build/cesta --admit
+
+test-ownership-nullable-loops-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_nullable_loops.py --cesta build/cesta --admit
+
+test-ownership-switch: build/cesta
+	python3 -B tests/ownership_switch.py
 
 test-ownership-runtime: build/cesta
 	python3 -B tests/ownership_runtime.py
@@ -518,7 +545,14 @@ test-ownership-model: build/cesta
 test-ownership-admission: build/cesta test-ownership-model
 	python3 -B tests/ownership_admission.py
 
+test-ownership-staging: build/cesta test-ownership-model
+	python3 -B tests/ownership_staging.py
+
 .PHONY: check test qualify
 check: $(CHECK_GATES)
 test: $(TEST_GATES)
 qualify: $(QUALIFY_GATES)
+
+.PHONY: test-ownership-switch-exhaustive
+test-ownership-switch-exhaustive: build/cesta test-ownership-model
+	python3 -B tests/ownership_switch_exhaustive.py

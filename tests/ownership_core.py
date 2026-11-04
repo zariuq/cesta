@@ -16,6 +16,23 @@ def document(source, contracts=""):
 
 
 POSITIVE = {
+    "switch_total_returns": ("int f(int n){switch(n){case 0:return 7;default:return 9;}}", ""),
+    "switch_total_grouped_default": ("int f(int n){switch(n){case 0:return 7;default:case 1:case 2:return 9;}}", ""),
+    "switch_total_nested": ("int f(int n,int m){switch(n){case 0:switch(m){case 1:return 3;default:return 4;}default:return 9;}}", ""),
+    "switch_total_default_only": ("int f(int n){switch(n){default:return 9;}}", ""),
+    "switch_total_break_continues": ("int f(int n){switch(n){case 0:break;default:return 9;}return 7;}", ""),
+
+    "const_array_parameter": ("typedef int Row[3]; int f(const Row *p) {return (*p)[0]+(*p)[2];}", ""),
+    "const_matrix_parameter": ("typedef int Matrix[2][3]; int f(const Matrix *p) {return (*p)[0][1]+(*p)[1][2];}", ""),
+    "const_array_record_call": ("typedef int Row[3]; typedef struct {Row row; int other;} Box; int read_row(const Row *p) {return (*p)[1];} int f(void) {Box box={{1,2,3},4}; int result; {const Box *view=&box;result=read_row(&view->row);}box.other=9;return result+box.other;}", ""),
+    "const_array_static_reads": ("typedef int Row[3]; static const Row data={1,2,3}; int read_row(const Row *p) {return (*p)[1];} int f(void) {return read_row(&data)+read_row(&data);}", ""),
+    "switch_grouped_returns": ("int f(int n) {switch(n){case 0:case 1:return 7;default:return 9;}return 0;}", ""),
+    "switch_grouped_breaks": ("int f(int n) {int x=0;switch(n){case 0:case 1:x=7;break;default:x=9;}return x;}", ""),
+    "switch_default_group": ("int f(int n) {int x=0;switch(n){default:case 1:case 2:x=7;break;}return x;}", ""),
+    "switch_grouped_loop": ("int f(int n) {int x=0;switch(n){case 0:case 1:for(int i=0;i<3;++i){if(i==2)break;++x;}break;default:x=9;}return x;}", ""),
+    "switch_disjoint_loan": ("typedef struct {int x,y;} P; int f(int n) {P p={1,2};const int *held=&p.x;switch(n){case 0:case 1:++p.y;break;default:p.y=9;}return *held+p.y;}", ""),
+    "value_record_projection": ("typedef struct {int value;} R; R make(int *count) { ++*count; return (R){7}; } int f(void) { int count=0; int result=make(&count).value; return count==1?result:99; }", ""),
+    "nested_value_projection": ("typedef struct {int value;} I; typedef struct {I inner;} O; O make(int *count) { ++*count; return (O){{7}}; } int f(void) { int count=0; int result=make(&count).inner.value; return count==1?result:99; }", ""),
     "fields": ("typedef struct { int x, y; } Pair; static void inc(int *p) { ++*p; } int main(void) { Pair p={1,2}; int *x=&p.x; inc(&p.y); *x+=3; return p.y==3 ? 0:1; }", ""),
     "readers": ("int f(void) { int n=4; const int *a=&n; const int *b=a; return *a+*b; }", ""),
     "scoped_reborrow": ("int f(void) { int n=4; int *a=&n; { int *b=a; ++*b; } ++*a; return *a; }", ""),
@@ -33,6 +50,22 @@ POSITIVE = {
 }
 
 NEGATIVE = {
+    "switch_missing_default": ("int f(int n){switch(n){case 0:return 7;case 1:return 9;}}", "", "end without a result"),
+    "switch_break_without_return": ("int f(int n){switch(n){case 0:break;default:return 9;}}", "", "end without a result"),
+    "switch_nested_break_without_return": ("int f(int n,int m){switch(n){case 0:switch(m){case 1:break;default:return 4;}break;default:return 9;}}", "", "end without a result"),
+
+    "const_array_store": ("typedef int Row[3]; void f(const Row *p) {Row *w=(Row *)p;(*w)[0]=7;}", "", "ownership"),
+    "const_matrix_store": ("typedef int Matrix[2][3]; void f(const Matrix *p) {Matrix *w=(Matrix *)p;(*w)[1][2]=7;}", "", "ownership"),
+    "const_array_live_reader": ("typedef int Row[3]; typedef struct {Row row;} Box; int read_row(const Row *p){return (*p)[0];}void write_row(Row *p){(*p)[0]=7;}int f(Box *box){const Box *view=box;int result=read_row(&view->row);write_row(&box->row);return result+view->row[0];}", "", "loan"),
+    "switch_fallthrough": ("int f(int n) {int x=0;switch(n){case 0:x=1;case 1:x=2;break;default:x=3;}return x;}", "", "fall-through"),
+    "switch_partial_fallthrough": ("int f(int n) {int x=0;switch(n){case 0:case 1:if(n==0)break;x=1;case 2:x=2;break;default:x=3;}return x;}", "", "fall-through"),
+    "switch_grouped_live_loan": ("typedef struct {int x,y;} P; int f(int n) {P p={1,2};const int *held=&p.x;switch(n){case 0:case 1:++p.x;break;default:p.y=9;}return *held+p.y;}", "", "loan"),
+    "temporary_reference_projection": ("typedef struct {const int *data; int value;} R; extern R make(void); int f(void) { return make().value; }", '(foreign make (obligation "Returns a native record."))', "plain value"),
+    "temporary_opaque_projection": ("typedef struct {int value;} Ticket; extern Ticket make(void); int f(void) { return make().value; }", '(capability Ticket permits) (foreign make (obligation "Returns a native record."))', "opaque capability"),
+    "temporary_uncontracted_producer": ("typedef struct {int value;} R; extern R make(int *p); int f(int *p) { return make(p).value; }", '', "foreign obligation"),
+    "temporary_producer_loan": ("typedef struct {int value;} R; R make(int *p) { *p=7; return (R){1}; } int f(int *p) { const int *hold=p; int result=make(p).value; return *hold+result; }", '', "loan"),
+    "temporary_volatile_projection": ("typedef struct {volatile int value;} R; extern R make(void); int f(void) { return make().value; }", '(foreign make (obligation "Returns a native record."))', "native resource"),
+    "temporary_array_escape": ("typedef struct {int data[2];} R; extern R make(void); const int *f(void) { return make().data; }", '(function f (returns-static)) (foreign make (obligation "Returns a native value record."))', "temporary array"),
     "overlapping_mutable": ("int f(void) { int n=3; int *p=&n; int *q=&n; return *p+*q; }", "", "overlapping loan"),
     "write_under_shared": ("int f(void) { int n=3; const int *p=&n; n=4; return *p; }", "", "overlapping loan"),
     "read_under_exclusive": ("int f(void) { int n=3; int *p=&n; return n+*p; }", "", "overlapping loan"),
@@ -85,6 +118,8 @@ POSITIVE.update({
     "capability_move": (TICKET_C + 'int f(void) {Ticket *t=issue();Ticket *m=t;perform(m);return 7;}', TICKET_CONTRACT),
     "capability_record": (TICKET_C + 'typedef struct {Ticket *effect;} Call; int f(void) {Call c={issue()};Call m=c;perform(m.effect);return 7;}', TICKET_CONTRACT + ' (record Call (field effect (owns effects)))'),
 })
+POSITIVE["switch_total_heap_release"] = (HEAP_C + "void f(int n){int *p=(int *)reserve(4);if(!p){dispose(p);return;}switch(n){case 0:dispose(p);return;default:dispose(p);return;}}", HEAP_CONTRACT)
+
 NEGATIVE.update({
     "indirect_global_reentry": ('static int n; int owner(void); void relay(void) {(void)owner();} int owner(void) {int *p=&n;relay();return *p;}', '(global n owner)', 'overlapping loan'),
     "global_alias_through_helper": ('static int n; void owner(int step); void relay(const int *p) {owner(0);(void)*p;} void owner(int step) {if(step)relay(&n);else ++n;}', '(global n owner)', 'overlapping loan'),

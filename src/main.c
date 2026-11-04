@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
     if (argc < 3 || (strcmp(argv[1], "check-grammar") && strcmp(argv[1], "parse") &&
                     strcmp(argv[1], "read") && strcmp(argv[1], "write") && strcmp(argv[1], "check-module") && strcmp(argv[1], "module-grammar") && strcmp(argv[1], "lr-table") && strcmp(argv[1], "parse-lr") && strcmp(argv[1],"build") && strcmp(argv[1],"check-program") && strcmp(argv[1],"run") && strcmp(argv[1],"export-metadata"))) {
         fputs("usage: cesta check-grammar GRAMMAR.cf\n"
-              "       cesta cc [--cc COMPILER] FLAGS SOURCES.csexp [OBJECTS/LIBRARIES]\n"
+              "       cesta cc [--cc COMPILER] [--read-warnings] FLAGS SOURCES [OBJECTS/LIBRARIES]\n"
               "       cesta expand [--cc COMPILER] [--presentation native-c/1] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
               "       cesta check-macros MODULE THEORY\n"
               "       cesta checked check|plan|header FILE.cesta [-o OUTPUT]\n"

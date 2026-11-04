@@ -16,19 +16,19 @@ const CeAbi ce_abi_x86_64_sysv = {
         [CE_T_INT]=4, [CE_T_UINT]=4, [CE_T_LONG]=8, [CE_T_ULONG]=8, [CE_T_LLONG]=8, [CE_T_ULLONG]=8,
         [CE_T_INT128]=16, [CE_T_UINT128]=16, [CE_T_FLOAT]=4, [CE_T_DOUBLE]=8, [CE_T_LDOUBLE]=16,
         [CE_T_FLOAT32]=4, [CE_T_FLOAT64]=8, [CE_T_FLOAT128]=16, [CE_T_FLOAT32X]=8, [CE_T_FLOAT64X]=16,
-        [CE_T_POINTER]=8
+        [CE_T_FLOAT16]=2, [CE_T_BFLOAT16]=2, [CE_T_POINTER]=8
     },
     .align = {
         [CE_T_BOOL]=1, [CE_T_CHAR]=1, [CE_T_SCHAR]=1, [CE_T_UCHAR]=1, [CE_T_SHORT]=2, [CE_T_USHORT]=2,
         [CE_T_INT]=4, [CE_T_UINT]=4, [CE_T_LONG]=8, [CE_T_ULONG]=8, [CE_T_LLONG]=8, [CE_T_ULLONG]=8,
         [CE_T_INT128]=16, [CE_T_UINT128]=16, [CE_T_FLOAT]=4, [CE_T_DOUBLE]=8, [CE_T_LDOUBLE]=16,
         [CE_T_FLOAT32]=4, [CE_T_FLOAT64]=8, [CE_T_FLOAT128]=16, [CE_T_FLOAT32X]=8, [CE_T_FLOAT64X]=16,
-        [CE_T_POINTER]=8
+        [CE_T_FLOAT16]=2, [CE_T_BFLOAT16]=2, [CE_T_POINTER]=8
     },
     /* significand precision and exponent range identify a value set */
     .precision = {
         [CE_T_FLOAT]=24, [CE_T_DOUBLE]=53, [CE_T_LDOUBLE]=64, [CE_T_FLOAT32]=24, [CE_T_FLOAT64]=53,
-        [CE_T_FLOAT128]=113, [CE_T_FLOAT32X]=53, [CE_T_FLOAT64X]=64
+        [CE_T_FLOAT128]=113, [CE_T_FLOAT32X]=53, [CE_T_FLOAT64X]=64, [CE_T_FLOAT16]=11, [CE_T_BFLOAT16]=8
     },
     .char_signed = true,
     .size_type = CE_T_ULONG, .ptrdiff_type = CE_T_LONG, .wchar_type = CE_T_INT,
@@ -44,17 +44,19 @@ const CeAbi ce_abi_i386_sysv = {
         [CE_T_BOOL]=1, [CE_T_CHAR]=1, [CE_T_SCHAR]=1, [CE_T_UCHAR]=1, [CE_T_SHORT]=2, [CE_T_USHORT]=2,
         [CE_T_INT]=4, [CE_T_UINT]=4, [CE_T_LONG]=4, [CE_T_ULONG]=4, [CE_T_LLONG]=8, [CE_T_ULLONG]=8,
         [CE_T_FLOAT]=4, [CE_T_DOUBLE]=8, [CE_T_LDOUBLE]=12, [CE_T_FLOAT32]=4, [CE_T_FLOAT64]=8,
-        [CE_T_FLOAT128]=16, [CE_T_FLOAT32X]=8, [CE_T_FLOAT64X]=12, [CE_T_POINTER]=4
+        [CE_T_FLOAT128]=16, [CE_T_FLOAT32X]=8, [CE_T_FLOAT64X]=12, [CE_T_FLOAT16]=2, [CE_T_BFLOAT16]=2,
+        [CE_T_POINTER]=4
     },
     .align = {
         [CE_T_BOOL]=1, [CE_T_CHAR]=1, [CE_T_SCHAR]=1, [CE_T_UCHAR]=1, [CE_T_SHORT]=2, [CE_T_USHORT]=2,
         [CE_T_INT]=4, [CE_T_UINT]=4, [CE_T_LONG]=4, [CE_T_ULONG]=4, [CE_T_LLONG]=4, [CE_T_ULLONG]=4,
         [CE_T_FLOAT]=4, [CE_T_DOUBLE]=4, [CE_T_LDOUBLE]=4, [CE_T_FLOAT32]=4, [CE_T_FLOAT64]=4,
-        [CE_T_FLOAT128]=16, [CE_T_FLOAT32X]=4, [CE_T_FLOAT64X]=4, [CE_T_POINTER]=4
+        [CE_T_FLOAT128]=16, [CE_T_FLOAT32X]=4, [CE_T_FLOAT64X]=4, [CE_T_FLOAT16]=2, [CE_T_BFLOAT16]=2,
+        [CE_T_POINTER]=4
     },
     .precision = {
         [CE_T_FLOAT]=24, [CE_T_DOUBLE]=53, [CE_T_LDOUBLE]=64, [CE_T_FLOAT32]=24, [CE_T_FLOAT64]=53,
-        [CE_T_FLOAT128]=113, [CE_T_FLOAT32X]=53, [CE_T_FLOAT64X]=64
+        [CE_T_FLOAT128]=113, [CE_T_FLOAT32X]=53, [CE_T_FLOAT64X]=64, [CE_T_FLOAT16]=11, [CE_T_BFLOAT16]=8
     },
     .char_signed = true,
     .size_type = CE_T_UINT, .ptrdiff_type = CE_T_INT, .wchar_type = CE_T_INT,
@@ -85,9 +87,56 @@ const CeAbi ce_abi_x86_64_windows = {
     .max_align = 16, .enum_policy = CE_ENUM_INT, .record_layout = CE_RECORD_MS
 };
 
+/* AArch64 AAPCS64, LP64, as Clang's aarch64-none-elf target implements it.
+   Plain char is unsigned and long double is IEEE binary128. The natural
+   scalar/record corpus is compiler-probed; the distinct layout tag keeps
+   target-specific rules explicit as the corpus grows. */
+const CeAbi ce_abi_aarch64_aapcs64 = {
+    .name = "aarch64-aapcs64-lp64",
+    .size = {
+        [CE_T_BOOL]=1, [CE_T_CHAR]=1, [CE_T_SCHAR]=1, [CE_T_UCHAR]=1, [CE_T_SHORT]=2, [CE_T_USHORT]=2,
+        [CE_T_INT]=4, [CE_T_UINT]=4, [CE_T_LONG]=8, [CE_T_ULONG]=8, [CE_T_LLONG]=8, [CE_T_ULLONG]=8,
+        [CE_T_INT128]=16, [CE_T_UINT128]=16, [CE_T_FLOAT]=4, [CE_T_DOUBLE]=8, [CE_T_LDOUBLE]=16,
+        [CE_T_FLOAT16]=2, [CE_T_BFLOAT16]=2, [CE_T_POINTER]=8
+    },
+    .align = {
+        [CE_T_BOOL]=1, [CE_T_CHAR]=1, [CE_T_SCHAR]=1, [CE_T_UCHAR]=1, [CE_T_SHORT]=2, [CE_T_USHORT]=2,
+        [CE_T_INT]=4, [CE_T_UINT]=4, [CE_T_LONG]=8, [CE_T_ULONG]=8, [CE_T_LLONG]=8, [CE_T_ULLONG]=8,
+        [CE_T_INT128]=16, [CE_T_UINT128]=16, [CE_T_FLOAT]=4, [CE_T_DOUBLE]=8, [CE_T_LDOUBLE]=16,
+        [CE_T_FLOAT16]=2, [CE_T_BFLOAT16]=2, [CE_T_POINTER]=8
+    },
+    .precision = {
+        [CE_T_FLOAT]=24, [CE_T_DOUBLE]=53, [CE_T_LDOUBLE]=113,
+        [CE_T_FLOAT16]=11, [CE_T_BFLOAT16]=8
+    },
+    .char_signed = false,
+    .size_type = CE_T_ULONG, .ptrdiff_type = CE_T_LONG, .wchar_type = CE_T_UINT,
+    .char16_type = CE_T_USHORT, .char32_type = CE_T_UINT, .word_type = CE_T_LONG,
+    .max_align = 16, .enum_policy = CE_ENUM_GNU, .record_layout = CE_RECORD_AAPCS64
+};
+
 const CeAbi *ce_abi_named(const char *name) {
-    const CeAbi *abis[] = {&ce_abi_x86_64_sysv,&ce_abi_i386_sysv,&ce_abi_x86_64_windows};
-    for (size_t i = 0; i < 3; ++i) if (!strcmp(abis[i]->name,name)) return abis[i];
+    const CeAbi *abis[] = {&ce_abi_x86_64_sysv,&ce_abi_i386_sysv,&ce_abi_x86_64_windows,
+                           &ce_abi_aarch64_aapcs64};
+    for (size_t i = 0; i < sizeof(abis)/sizeof(*abis); ++i) if (!strcmp(abis[i]->name,name)) return abis[i];
+    return NULL;
+}
+
+const CeAbi *ce_abi_predefined(const char *macros) {
+    if (!macros) return NULL;
+    if (strstr(macros,"#define __aarch64__ 1\n") &&
+        strstr(macros,"#define __ARM_PCS_AAPCS64 1\n") &&
+        strstr(macros,"#define __SIZEOF_POINTER__ 8\n") &&
+        strstr(macros,"#define __SIZEOF_LONG__ 8\n") &&
+        strstr(macros,"#define __SIZEOF_LONG_DOUBLE__ 16\n") &&
+        strstr(macros,"#define __LDBL_MANT_DIG__ 113\n") &&
+        strstr(macros,"#define __CHAR_UNSIGNED__ 1\n")) return &ce_abi_aarch64_aapcs64;
+    if (strstr(macros,"#define __x86_64__ 1\n") && strstr(macros,"#define __SIZEOF_POINTER__ 8\n")) {
+        if (strstr(macros,"#define __SIZEOF_LONG__ 8\n")) return &ce_abi_x86_64_sysv;
+        if (strstr(macros,"#define __SIZEOF_LONG__ 4\n")) return &ce_abi_x86_64_windows;
+    }
+    if (strstr(macros,"#define __i386__ 1\n") && strstr(macros,"#define __SIZEOF_POINTER__ 4\n"))
+        return &ce_abi_i386_sysv;
     return NULL;
 }
 
@@ -98,7 +147,8 @@ static const char *kind_spelling[CE_T_KINDS] = {
     [CE_T_LLONG]="long long", [CE_T_ULLONG]="unsigned long long", [CE_T_INT128]="__int128",
     [CE_T_UINT128]="unsigned __int128", [CE_T_FLOAT]="float", [CE_T_DOUBLE]="double",
     [CE_T_LDOUBLE]="long double", [CE_T_FLOAT32]="_Float32", [CE_T_FLOAT64]="_Float64",
-    [CE_T_FLOAT128]="_Float128", [CE_T_FLOAT32X]="_Float32x", [CE_T_FLOAT64X]="_Float64x"
+    [CE_T_FLOAT128]="_Float128", [CE_T_FLOAT32X]="_Float32x", [CE_T_FLOAT64X]="_Float64x",
+    [CE_T_FLOAT16]="_Float16", [CE_T_BFLOAT16]="__bf16"
 };
 
 /* ---- construction --------------------------------------------------------- */
@@ -143,7 +193,7 @@ CeType *ce_type_array(CeSema *sema, CeType *of, long long length) {
 bool ce_type_integer(const CeType *t) {
     return (t->kind >= CE_T_BOOL && t->kind <= CE_T_UINT128) || t->kind == CE_T_ENUM;
 }
-bool ce_type_real_floating(const CeType *t) { return t->kind >= CE_T_FLOAT && t->kind <= CE_T_FLOAT64X; }
+bool ce_type_real_floating(const CeType *t) { return t->kind >= CE_T_FLOAT && t->kind <= CE_T_BFLOAT16; }
 bool ce_type_floating(const CeType *t) { return ce_type_real_floating(t) || t->kind == CE_T_COMPLEX; }
 bool ce_type_arithmetic(const CeType *t) { return ce_type_integer(t) || ce_type_floating(t); }
 bool ce_type_scalar(const CeType *t) { return ce_type_arithmetic(t) || t->kind == CE_T_POINTER; }
@@ -218,12 +268,13 @@ CeType *ce_type_promoted(CeSema *sema, const CeType *t, unsigned bits) {
     return ce_type_basic(sema,promoted);
 }
 
-/* Floating ranks (§6.3.1.8 with ISO/IEC TS 18661-3): by value set; at equal
-   value sets an interchange type outranks the standard type, which outranks
-   an extended type. */
+/* Floating ranks (§6.3.1.8 with ISO/IEC TS 18661-3): by precision; at equal
+   precision an interchange type outranks the standard type, which outranks
+   an extended type. Precision orders the value sets except for _Float16 and
+   __bf16, which GCC and Clang also convert to _Float16. */
 static unsigned floating_rank(const CeAbi *abi, unsigned kind) {
-    unsigned tier = kind == CE_T_FLOAT32 || kind == CE_T_FLOAT64 || kind == CE_T_FLOAT128 ? 2 :
-        kind == CE_T_FLOAT32X || kind == CE_T_FLOAT64X ? 0 : 1;
+    unsigned tier = kind == CE_T_FLOAT16 || kind == CE_T_FLOAT32 || kind == CE_T_FLOAT64 || kind == CE_T_FLOAT128 ? 2 :
+        kind == CE_T_FLOAT32X || kind == CE_T_FLOAT64X || kind == CE_T_BFLOAT16 ? 0 : 1;
     /* float < double < long double even where formats coincide (§6.3.1.8) */
     unsigned standard = kind == CE_T_LDOUBLE ? 2 : kind == CE_T_DOUBLE ? 1 : 0;
     return abi->precision[kind]*16 + tier*4 + standard;

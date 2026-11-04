@@ -116,6 +116,15 @@ def body(events):
             assert arm[0] == "arm"
             choice = "(.branch "+body(arm[1:])+" "+choice+" .done)"
         return "(.branch "+choice+" .done "+body(rest)+")"
+    if name == "switch-total":
+        arms = event[1:]
+        assert arms and all(arm[0] == "arm" for arm in arms)
+        choice = body(arms[-1][1:])
+        if len(arms) == 1:
+            return "(.branch "+choice+" "+choice+" "+body(rest)+")"
+        for arm in reversed(arms[1:-1]):
+            choice = "(.branch "+body(arm[1:])+" "+choice+" .done)"
+        return "(.branch "+body(arms[0][1:])+" "+choice+" "+body(rest)+")"
     return "(.step "+action(event)+" "+body(rest)+")"
 
 
@@ -217,7 +226,7 @@ def walk(events):
             yield from walk(event[1][1:]); yield from walk(event[2][1:])
         elif event[0] == "loop":
             yield from walk(event[1:])
-        elif event[0] == "switch":
+        elif event[0] in ("switch", "switch-total"):
             for arm in event[1:]:
                 yield from walk(arm[1:])
 
@@ -271,7 +280,7 @@ def mutations(declaration):
     return variants
 
 
-def admit_record(record, path, lean_root, controls=True, cache=True):
+def admit_record(record, path, lean_root, controls=True, cache=True, assemble=True):
     foreign, functions = module_parts(record)
     names = [name for name,_,_ in foreign]+[str(f[1]) for f in functions]
     assert len(names) == len(set(names))
@@ -340,6 +349,10 @@ def admit_record(record, path, lean_root, controls=True, cache=True):
         seconds = compile_file(directory/f"Part{index}.lean","\n".join(declarations)+"\n")
         timings.append({"name":str(item[1]),"seconds":seconds})
         print(f"ownership admission: {index+1}/{len(functions)} {item[1]} ({seconds}s)",flush=True)
+    if not assemble:
+        return {"functions":checks,"mutants":rejected,"foreign_obligations":len(foreign),
+            "plan_sha256":hashlib.sha256(str(record).encode()).hexdigest(),"timings":timings,
+            "cached_parts":cached,"module_admitted":False}
     declarations = ["import "+prefix+f".Part{i}" for i in range(len(functions))]+setup
     declarations.append("def wholeModule : Module := ⟨["+", ".join("⟨"+json.dumps(n)+", "+s+", "+json.dumps(o)+"⟩" for n,s,o in foreign)+"], ["+", ".join(f"fn{i}" for i in range(len(functions)))+"]⟩")
     declarations.append("theorem wholeModule_admitted : admit wholeModule = true := by\n"
@@ -349,7 +362,8 @@ def admit_record(record, path, lean_root, controls=True, cache=True):
     declarations.append("end "+prefix)
     compile_file(path,"\n".join(declarations)+"\n")
     return {"functions":checks,"mutants":rejected,"foreign_obligations":len(foreign),
-        "plan_sha256":hashlib.sha256(str(record).encode()).hexdigest(),"timings":timings,"cached_parts":cached}
+        "plan_sha256":hashlib.sha256(str(record).encode()).hexdigest(),"timings":timings,
+        "cached_parts":cached,"module_admitted":True}
 
 
 def main():

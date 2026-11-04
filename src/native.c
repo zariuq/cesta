@@ -133,10 +133,16 @@ static bool form(Native *native, const CeAtom *a, int sort, int parent, CeArena 
         CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;
         if (!ce_is(position,"ExternalDeclaration"))
             return ce_error(error,a->offset,"ownership declaration requires translation-unit scope");
-        return fputs("#if defined(__SIZEOF_POINTER__) && defined(__SIZEOF_LONG__)\n"
+        return fputs("#if defined(__aarch64__) && defined(__ARM_PCS_AAPCS64)\n"
+            "_Static_assert(__SIZEOF_POINTER__ == 8 && __SIZEOF_LONG__ == 8 && "
+            "__SIZEOF_LONG_DOUBLE__ == 16 && __LDBL_MANT_DIG__ == 113 && "
+            "(char)-1 > 0, \"ownership ABI profile requires AArch64 AAPCS64\");\n"
+            "#else\n#if defined(__SIZEOF_POINTER__) && defined(__SIZEOF_LONG__)\n"
             "_Static_assert(__SIZEOF_POINTER__ == 8 && __SIZEOF_LONG__ == 8, "
             "\"ownership ABI profile requires x86_64 SysV\");\n#endif\n"
-            "_Static_assert((unsigned char)256 == 0 && (char)-1 < 0 && "
+            "_Static_assert((char)-1 < 0, \"ownership ABI profile requires signed x86 plain char\");\n"
+            "#endif\n"
+            "_Static_assert((unsigned char)256 == 0 && "
             "sizeof(void *) == 8 && sizeof(long) == 8 && "
             "sizeof(int) == 4 && sizeof(short) == 2 && sizeof(long long) == 8 && "
             "sizeof(float) == 4 && sizeof(double) == 8 && sizeof(long double) == 16 && "
@@ -144,7 +150,7 @@ static bool form(Native *native, const CeAtom *a, int sort, int parent, CeArena 
             "_Alignof(void *) == 8 && _Alignof(long) == 8 && "
             "_Alignof(long double) == 16 && sizeof(struct { char a; long b; }) == 16 && "
             "sizeof(struct { char a; long double b; }) == 32, "
-            "\"ownership ABI profile requires x86_64 SysV\");\n",file) >= 0;
+            "\"ownership ABI profile requires a supported LP64 target\");\n",file) >= 0;
     }
     if (head(a,"use-macros") || head(a,"use-protocols")) {
         CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;

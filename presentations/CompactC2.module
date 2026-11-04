@@ -163,6 +163,7 @@ Module CompactC2Presentation {
       BareSpecUnsigned . DeclarationSpecifiers ::= "unsigned";
       BareSpecComplex . DeclarationSpecifiers ::= "_Complex";
       BareSpecGNUInt128 . DeclarationSpecifiers ::= "__int128";
+      BareSpecGNUFloat16 . DeclarationSpecifiers ::= "_Float16";
       BareSpecGNUSigned . DeclarationSpecifiers ::= "__signed__";
       UniqueSpec . DeclarationSpecifiers ::= UniqueTypeSpecifier;
       UniqueSpecTails . DeclarationSpecifiers ::= "(" "type" UniqueTypeSpecifier [NonTypeSpecifier] ")";
@@ -176,6 +177,7 @@ Module CompactC2Presentation {
       SpecTailsUnsigned . DeclarationSpecifiers ::= "(" "unsigned" [PrimitiveOrNonTypeSpecifier] ")";
       SpecTailsComplex . DeclarationSpecifiers ::= "(" "_Complex" [PrimitiveOrNonTypeSpecifier] ")";
       SpecTailsGNUInt128 . DeclarationSpecifiers ::= "(" "__int128" [PrimitiveOrNonTypeSpecifier] ")";
+      SpecTailsGNUFloat16 . DeclarationSpecifiers ::= "(" "_Float16" [PrimitiveOrNonTypeSpecifier] ")";
       SpecTailsGNUSigned . DeclarationSpecifiers ::= "(" "__signed__" [PrimitiveOrNonTypeSpecifier] ")";
       PrefixSpecTypedef . DeclarationSpecifiers ::= "(" "typedef" "." DeclarationSpecifiers ")";
       PrefixSpecExtern . DeclarationSpecifiers ::= "(" "extern" "." DeclarationSpecifiers ")";
@@ -244,12 +246,14 @@ Module CompactC2Presentation {
       Unsigned . PrimitiveTypeSpecifier ::= "unsigned";
       Complex . PrimitiveTypeSpecifier ::= "_Complex";
       GNUInt128 . PrimitiveTypeSpecifier ::= "__int128";
+      GNUFloat16 . PrimitiveTypeSpecifier ::= "_Float16";
       GNUSigned . PrimitiveTypeSpecifier ::= "__signed__";
       Void . UniqueTypeSpecifier ::= "void";
       Bool . UniqueTypeSpecifier ::= "_Bool";
       GNUAutoType . UniqueTypeSpecifier ::= "__auto_type";
       GNUFloat128 . UniqueTypeSpecifier ::= "_Float128";
       GNUFloat32 . UniqueTypeSpecifier ::= "_Float32";
+      GNUBFloat16 . UniqueTypeSpecifier ::= "__bf16";
       GNUFloat64 . UniqueTypeSpecifier ::= "_Float64";
       GNUFloat32x . UniqueTypeSpecifier ::= "_Float32x";
       GNUFloat64x . UniqueTypeSpecifier ::= "_Float64x";
@@ -328,6 +332,7 @@ Module CompactC2Presentation {
       BareSQUnsigned . SpecifierQualifiers ::= "unsigned";
       BareSQComplex . SpecifierQualifiers ::= "_Complex";
       BareSQGNUInt128 . SpecifierQualifiers ::= "__int128";
+      BareSQGNUFloat16 . SpecifierQualifiers ::= "_Float16";
       BareSQGNUSigned . SpecifierQualifiers ::= "__signed__";
       BareUniqueSpecifierQualifiers . SpecifierQualifiers ::= UniqueTypeSpecifier;
       UniqueQualified . SpecifierQualifiers ::= "(" "type" UniqueTypeSpecifier [TypeQualifier] ")";
@@ -341,6 +346,7 @@ Module CompactC2Presentation {
       SQTailsUnsigned . SpecifierQualifiers ::= "(" "unsigned" [PrimitiveOrQualifier] ")";
       SQTailsComplex . SpecifierQualifiers ::= "(" "_Complex" [PrimitiveOrQualifier] ")";
       SQTailsGNUInt128 . SpecifierQualifiers ::= "(" "__int128" [PrimitiveOrQualifier] ")";
+      SQTailsGNUFloat16 . SpecifierQualifiers ::= "(" "_Float16" [PrimitiveOrQualifier] ")";
       SQTailsGNUSigned . SpecifierQualifiers ::= "(" "__signed__" [PrimitiveOrQualifier] ")";
       PrefixSQConst . SpecifierQualifiers ::= "(" "const" "." SpecifierQualifiers ")";
       PrefixSQRestrict . SpecifierQualifiers ::= "(" "restrict" "." SpecifierQualifiers ")";
@@ -591,6 +597,7 @@ Module CompactC2Presentation {
       (BareSpecUnsigned) == (PrimitiveDeclarationSpecifiers (Unsigned) (List));
       (BareSpecComplex) == (PrimitiveDeclarationSpecifiers (Complex) (List));
       (BareSpecGNUInt128) == (PrimitiveDeclarationSpecifiers (GNUInt128) (List));
+      (BareSpecGNUFloat16) == (PrimitiveDeclarationSpecifiers (GNUFloat16) (List));
       (BareSpecGNUSigned) == (PrimitiveDeclarationSpecifiers (GNUSigned) (List));
       (UniqueSpec a) == (UniqueDeclarationSpecifiers a (List));
       (UniqueSpecTails a b) == (UniqueDeclarationSpecifiers a b);
@@ -604,6 +611,7 @@ Module CompactC2Presentation {
       (SpecTailsUnsigned a) == (PrimitiveDeclarationSpecifiers (Unsigned) a);
       (SpecTailsComplex a) == (PrimitiveDeclarationSpecifiers (Complex) a);
       (SpecTailsGNUInt128 a) == (PrimitiveDeclarationSpecifiers (GNUInt128) a);
+      (SpecTailsGNUFloat16 a) == (PrimitiveDeclarationSpecifiers (GNUFloat16) a);
       (SpecTailsGNUSigned a) == (PrimitiveDeclarationSpecifiers (GNUSigned) a);
       (PrefixSpecTypedef a) == (PrefixedDeclarationSpecifiers (StorageSpecifier (Typedef)) a);
       (PrefixSpecExtern a) == (PrefixedDeclarationSpecifiers (StorageSpecifier (Extern)) a);
@@ -686,6 +694,7 @@ Module CompactC2Presentation {
       (BareSQUnsigned) == (PrimitiveSpecifierQualifiers (Unsigned) (List));
       (BareSQComplex) == (PrimitiveSpecifierQualifiers (Complex) (List));
       (BareSQGNUInt128) == (PrimitiveSpecifierQualifiers (GNUInt128) (List));
+      (BareSQGNUFloat16) == (PrimitiveSpecifierQualifiers (GNUFloat16) (List));
       (BareSQGNUSigned) == (PrimitiveSpecifierQualifiers (GNUSigned) (List));
       (BareUniqueSpecifierQualifiers a) == (UniqueSpecifierQualifiers a (NoTypeQualifiers));
       (UniqueQualified a b) == (UniqueSpecifierQualifiers a (SomeTypeQualifiers b));
@@ -699,6 +708,7 @@ Module CompactC2Presentation {
       (SQTailsUnsigned a) == (PrimitiveSpecifierQualifiers (Unsigned) a);
       (SQTailsComplex a) == (PrimitiveSpecifierQualifiers (Complex) a);
       (SQTailsGNUInt128 a) == (PrimitiveSpecifierQualifiers (GNUInt128) a);
+      (SQTailsGNUFloat16 a) == (PrimitiveSpecifierQualifiers (GNUFloat16) a);
       (SQTailsGNUSigned a) == (PrimitiveSpecifierQualifiers (GNUSigned) a);
       (PrefixSQConst a) == (PrefixedSpecifierQualifiers (Const) a);
       (PrefixSQRestrict a) == (PrefixedSpecifierQualifiers (Restrict) a);

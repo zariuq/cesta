@@ -19,7 +19,7 @@
     X(Void) X(Bool) X(AtomicType) X(StructType) X(EnumType) X(TypedefType) X(Char) X(Short) \
     X(Int) X(Long) X(Float) X(Double) X(Signed) X(Unsigned) X(Complex) X(GNUInt128) X(GNUSigned) \
     X(GNUAutoType) X(GNUFloat128) X(GNUFloat32) X(GNUFloat64) X(GNUFloat32x) X(GNUFloat64x) \
-    X(GNUFloat128x) X(GNUQuad) X(GNUTypeofType) X(GNUTypeofExpression) \
+    X(GNUFloat128x) X(GNUQuad) X(GNUFloat16) X(GNUBFloat16) X(GNUTypeofType) X(GNUTypeofExpression) \
     X(StructDefinition) X(StructReference) X(GNUEmptyStruct) X(GNUAttributedStruct) X(Struct) \
     X(Union) X(GNUAttributedStructKind) X(NoIdent) X(SomeIdent) X(StructDeclaration) \
     X(StructStaticAssertion) X(GNUEmptyStructDeclaration) X(GNUStructDeclarationExtension) \
@@ -104,7 +104,7 @@ enum {
     CE_T_VOID, CE_T_BOOL, CE_T_CHAR, CE_T_SCHAR, CE_T_UCHAR, CE_T_SHORT, CE_T_USHORT,
     CE_T_INT, CE_T_UINT, CE_T_LONG, CE_T_ULONG, CE_T_LLONG, CE_T_ULLONG, CE_T_INT128,
     CE_T_UINT128, CE_T_FLOAT, CE_T_DOUBLE, CE_T_LDOUBLE, CE_T_FLOAT32, CE_T_FLOAT64,
-    CE_T_FLOAT128, CE_T_FLOAT32X, CE_T_FLOAT64X, CE_T_COMPLEX, CE_T_ENUM, CE_T_POINTER,
+    CE_T_FLOAT128, CE_T_FLOAT32X, CE_T_FLOAT64X, CE_T_FLOAT16, CE_T_BFLOAT16, CE_T_COMPLEX, CE_T_ENUM, CE_T_POINTER,
     CE_T_ARRAY, CE_T_FUNCTION, CE_T_STRUCT, CE_T_UNION, CE_T_KINDS
 };
 enum { CE_Q_CONST = 1, CE_Q_VOLATILE = 2, CE_Q_RESTRICT = 4, CE_Q_ATOMIC = 8 };
@@ -120,9 +120,11 @@ typedef struct {
     unsigned record_layout;       /* target record and bit-field allocation policy */
 } CeAbi;
 enum { CE_ENUM_GNU, CE_ENUM_INT };
-enum { CE_RECORD_SYSV, CE_RECORD_MS };
-extern const CeAbi ce_abi_x86_64_sysv, ce_abi_i386_sysv, ce_abi_x86_64_windows;
+enum { CE_RECORD_SYSV, CE_RECORD_MS, CE_RECORD_AAPCS64 };
+extern const CeAbi ce_abi_x86_64_sysv, ce_abi_i386_sysv, ce_abi_x86_64_windows,
+    ce_abi_aarch64_aapcs64;
 const CeAbi *ce_abi_named(const char *name);
+const CeAbi *ce_abi_predefined(const char *macros);
 
 struct CeEntity;
 typedef struct CeType {
@@ -303,6 +305,7 @@ CeEntity *ce_sema_entity(CeSema *sema, unsigned kind, unsigned space, CeText nam
 const CeUse *ce_sema_use(const CeSema *sema, const CeTree *node);
 bool ce_bind(CeSema *sema, const CeTree *unit, CeError *error);
 bool ce_sema_init(CeSema *sema, const CeGrammar *grammar, CeText source, CeError *error);
+bool ce_sema_extents(CeSema *sema, const CeTree *root, const CeTokens *tokens, CeError *error);
 void ce_sema_free(CeSema *sema);
 
 #endif
