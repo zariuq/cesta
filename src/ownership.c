@@ -54,7 +54,7 @@ typedef struct {
     CeText name; const CeAtom *spec;
     CeEntity *entity; const CeTree *body;
     CeEntity **parameters; size_t nparameters;
-    bool checked, foreign, variadic_read;
+    bool checked, foreign, unchecked, variadic_read;
     int result_from; const CeAtom *result_path;
     bool result_static, result_nullable; unsigned result_family;
     int *modes, *stores; unsigned *families;
@@ -1973,8 +1973,12 @@ static bool signature(Ownership *o, Function *f, const CeAtom *spec) {
         } else return malformed(o,part,"unknown or malformed function ownership contract");
     }
     if (f->foreign && !f->obligation.len) return malformed(o,spec,"foreign function requires a named obligation");
-    if (f->foreign && f->body) return malformed(o,spec,"a defined function must be checked rather than declared foreign");
-    if (reference_type(o,f->entity->type->base) && !f->result_static && f->result_from < 0 && !f->result_family)
+    if (f->foreign && f->body && !f->unchecked)
+        return malformed(o,spec,"a defined function must be checked, or named unchecked with its obligation");
+    /* An unchecked definition may leave its pointer result without an origin;
+       a checked call that receives that result is then refused. */
+    if (reference_type(o,f->entity->type->base) && !f->result_static && f->result_from < 0 && !f->result_family &&
+        !f->unchecked)
         return malformed(o,spec,"pointer return requires a lifetime origin");
     if (view(o,f->entity->type->base) && f->result_nullable)
         return malformed(o,spec,"view results carry an exact extent; optional values require a variant contract");
@@ -2354,6 +2358,7 @@ static bool check(Ownership *o, const CeTree *tree) {
     const CeTree *items = tree->children[0];
     for (size_t i = 0; i < items->len; ++i) if (kind(o,items->children[i]) == CE_K_ExternalFunction) {
         const CeTree *def = items->children[i]->children[0];
+        while (kind(o,def) == CE_K_GNUFunctionExtension) def = def->children[0];
         CeEntity *e = entity(o,ce_declarator_name(o->sema,def->children[1]));
         Function *f = e ? function_named(o,e->name) : NULL;
         if (!f) return fail(o,def,"function definition has no bound signature");
@@ -2398,13 +2403,37 @@ static bool check(Ownership *o, const CeTree *tree) {
             alloc->allocation_count = 0; alloc->result_nullable = true;
             continue;
         }
-        if ((!head(spec,"function") && !head(spec,"foreign")) || spec->len < 2 || spec->items[1]->kind != CE_ATOM_SYMBOL)
-            return malformed(o,spec,"expected check-all, function or foreign declaration");
+        /* (unchecked (NAME...) CONTRACT... (obligation "...")) names a group
+           of definitions sharing one contract and obligation. */
+        if (head(spec,"unchecked") && spec->len >= 2 && spec->items[1]->kind == CE_ATOM_LIST) {
+            const CeAtom *names = spec->items[1];
+            if (!names->len) return malformed(o,spec,"unchecked group names no function");
+            for (size_t j = 0; j < names->len; ++j) {
+                if (names->items[j]->kind != CE_ATOM_SYMBOL)
+                    return malformed(o,names->items[j],"unchecked group expects function names");
+                Function *f = function_named(o,names->items[j]->text);
+                if (!f || !f->body) continue;
+                if (f->spec) return malformed(o,spec,"duplicate function ownership contract");
+                f->unchecked = f->foreign = true; f->checked = false;
+                if (!signature(o,f,spec)) return false;
+            }
+            continue;
+        }
+        if ((!head(spec,"function") && !head(spec,"foreign") && !head(spec,"unchecked")) || spec->len < 2 ||
+            spec->items[1]->kind != CE_ATOM_SYMBOL)
+            return malformed(o,spec,"expected check-all, function, foreign or unchecked declaration");
         Function *f = function_named(o,spec->items[1]->text);
+        /* An unchecked name absent from this preprocessing configuration
+           excludes nothing; a misspelt name leaves its body checked. */
+        if (head(spec,"unchecked") && (!f || !f->body)) continue;
         if (!f) return malformed(o,spec,"function contract has no C declaration");
         if (f->spec) return malformed(o,spec,"duplicate function ownership contract");
-        f->foreign = head(spec,"foreign");
-        if (!f->foreign) f->checked = true;
+        /* An unchecked definition keeps its body out of the check. Its callers
+           are checked against its declared contract, as for a foreign call. */
+        f->unchecked = head(spec,"unchecked");
+        f->foreign = head(spec,"foreign") || f->unchecked;
+        if (f->unchecked) f->checked = false;
+        else if (!f->foreign) f->checked = true;
         if (!signature(o,f,spec)) return false;
     }
     if (!all) return malformed(o,o->declaration,"ownership currently requires check-all; no unmarked body is silently trusted");
@@ -2440,20 +2469,40 @@ static bool check(Ownership *o, const CeTree *tree) {
     if (o->plan) fputs("(Ownership \"cesta-ownership/2\"\n",o->plan);
     if (o->plan) for (size_t i = 0; i < o->nfunctions; ++i) if (o->functions[i].foreign) {
         Function *f = &o->functions[i];
+        if (f->unchecked && reference_type(o,f->entity->type->base) && !f->result_static &&
+            f->result_from < 0 && !f->result_family) continue;  /* no checked call can use it */
         fprintf(o->plan," (foreign %.*s",(int)f->name.len,f->name.data);
         if (!write_signature(o,o->plan,f)) return false;
         fputs(" (obligation ",o->plan);
         CeAtom text = {.kind=CE_ATOM_TEXT,.text=f->obligation}; ce_atom_write(&text,o->plan);
         fputs("))\n",o->plan);
     }
-    size_t checked = 0;
+    /* A survey records the first refusal of every function body instead of
+       stopping at the first one. It never admits the unit. */
+    const char *survey = getenv("CESTA_OWNERSHIP_SURVEY");
+    size_t checked = 0, refused = 0;
     for (size_t i = 0; i < o->nfunctions; ++i) if (o->functions[i].checked) {
         Function *f = &o->functions[i];
         if (!f->body) return malformed(o,f->spec,"checked function has no body");
-        if (!check_function(o,f)) return false;
+        if (!check_function(o,f)) {
+            if (!survey || !*survey) return false;
+            FILE *record = fopen(survey,"a");
+            if (!record) return ce_error(o->error,o->declaration->offset,"cannot append the ownership survey %s",survey);
+            fprintf(record,"%s\t%.*s\t%s\n",o->identity,(int)f->name.len,f->name.data,o->error->message);
+            if (fclose(record)) return ce_error(o->error,o->declaration->offset,"cannot write the ownership survey %s",survey);
+            o->function = NULL; o->loops = o->loop_scope = o->switches = o->switch_scope = 0;
+            o->loop_entry = o->loop_exits = o->switch_entry = NULL; o->loop_step = NULL; o->switch_exit = NULL;
+            ++refused;
+            continue;
+        }
         ++checked;
     }
-    if (!checked) return malformed(o,o->declaration,"ownership declaration checked no function bodies");
+    if (refused)
+        return ce_error(o->error,o->declaration->offset,"ownership survey: %zu of %zu function bodies refused; see %s",
+                        refused,refused+checked,survey);
+    size_t named = 0;
+    for (size_t i = 0; i < o->nfunctions; ++i) named += o->functions[i].unchecked;
+    if (!checked && !named) return malformed(o,o->declaration,"ownership declaration checked no function bodies");
     if (o->plan) fputs(")\n",o->plan);
     return true;
 }
@@ -2465,9 +2514,15 @@ bool ce_ownership_check(CeArena *arena, const CeAtom *declaration, CeText text,
     CePPResult pp = {0}; CeGrammar grammar = {0}; CeTokens tokens = {0};
     CeDFA dfa = {0}; CeLR lr = {0}; CeForest forest = {.root=-1}; CeSema sema = {0};
     bool sema_ready = false, ok = false; CeTree *tree;
-    char **args = ce_alloc(arena,(argc+5)*sizeof(*args)); size_t n = 0;
+    char **args = ce_alloc(arena,(argc+6)*sizeof(*args)); size_t n = 0;
+    bool standard = false;
     args[n++] = "--cc"; args[n++] = arguments[0];
-    for (size_t i = 1; i < argc; ++i) args[n++] = arguments[i];
+    for (size_t i = 1; i < argc; ++i) {
+        args[n++] = arguments[i];
+        standard |= !strncmp(arguments[i],"-std=",5);
+    }
+    /* The native ownership profile reads C11; an explicit standard is kept. */
+    if (!standard) args[n++] = "-std=c11";
     args[n++] = "-x"; args[n++] = "c"; args[n++] = (char *)identity;
     if (!ce_pp_run_source(ce_builtin_CPPGNUGrammar(),(int)n,args,text,false,&pp,error)) goto done;
     if (!ce_builtin_dialect(&grammar,true,pp.clang,error) || !ce_dfa_prepare(&grammar,&dfa,error) ||

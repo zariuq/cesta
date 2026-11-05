@@ -5,7 +5,8 @@ preprocessed function bodies subject to ownership checking. The compiler and
 readable export both run the check. Includes and active preprocessor branches
 are read with the configured compiler flags, then bound and elaborated by the
 existing C type layer. A #line directive cannot hide an unchecked definition.
-The examples select C11: --std=c11 for export-c, or -std=c11 for cc.
+The examples select C11: --std=c11 for export-c, or -std=c11 for cc. When the
+compiler flags name no standard, the ownership check reads the unit as C11.
 
 Example:
 
@@ -254,6 +255,34 @@ cannot be returned as static references.
 This is a sequential module discipline. Concurrency, interrupts and foreign
 reentry require their own resource contracts; the declaration is not a mutex
 or a proof of whole-program race freedom.
+
+UNCHECKED DEFINITIONS
+
+  (unchecked total (obligation "Reads count ints at values; callers pass an
+                                array of that length."))
+
+  (unchecked (pick_row last_row) (obligation "..."))
+
+A function defined in the unit can be left out of the check by name, with the
+fact its body relies on. Its callers are checked against its declared contract
+exactly as for a foreign function, and the plan records it as a foreign
+obligation. Contract parts (nullable, returns-borrow, stores and the others)
+apply as usual. A pointer result may stay without an origin; a checked call
+that receives it is then refused, and the plan omits that definition. A unit
+may name every body unchecked; it then admits nothing as checked. A name
+with no definition in the active preprocessing configuration has no effect:
+a misspelt name leaves its body checked, and calls to a function that is only
+declared still need a foreign contract. A parenthesized list of names shares
+one contract and obligation. Declaring a
+defined function foreign is refused: an unchecked body is always named.
+
+SURVEYS
+
+CESTA_OWNERSHIP_SURVEY=FILE makes the check continue past a refused function
+body. Each refused body appends one line to FILE: the unit's source identity,
+the function name and its first refusal, separated by tabs.
+A surveyed unit is never admitted: the command fails, reporting how many of
+its bodies were refused.
 
 REFUSALS AND THE IMPLEMENTATION BOUNDARY
 

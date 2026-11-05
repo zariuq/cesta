@@ -133,7 +133,10 @@ static bool form(Native *native, const CeAtom *a, int sort, int parent, CeArena 
         CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;
         if (!ce_is(position,"ExternalDeclaration"))
             return ce_error(error,a->offset,"ownership declaration requires translation-unit scope");
-        return fputs("#if defined(__aarch64__) && defined(__ARM_PCS_AAPCS64)\n"
+        /* Checked units can be joined into one translation unit; the profile
+           assertion, with its probe enumerator, appears once. */
+        return fputs("#ifndef CESTA_OWNERSHIP_ABI_PROFILE\n#define CESTA_OWNERSHIP_ABI_PROFILE 1\n"
+            "#if defined(__aarch64__) && defined(__ARM_PCS_AAPCS64)\n"
             "_Static_assert(__SIZEOF_POINTER__ == 8 && __SIZEOF_LONG__ == 8 && "
             "__SIZEOF_LONG_DOUBLE__ == 16 && __LDBL_MANT_DIG__ == 113 && "
             "(char)-1 > 0, \"ownership ABI profile requires AArch64 AAPCS64\");\n"
@@ -150,7 +153,7 @@ static bool form(Native *native, const CeAtom *a, int sort, int parent, CeArena 
             "_Alignof(void *) == 8 && _Alignof(long) == 8 && "
             "_Alignof(long double) == 16 && sizeof(struct { char a; long b; }) == 16 && "
             "sizeof(struct { char a; long double b; }) == 32, "
-            "\"ownership ABI profile requires a supported LP64 target\");\n",file) >= 0;
+            "\"ownership ABI profile requires a supported LP64 target\");\n#endif\n",file) >= 0;
     }
     if (head(a,"use-macros") || head(a,"use-protocols")) {
         CeText position = native->grammar->symbols[native->grammar->symbols[sort].sort].name;

@@ -489,7 +489,7 @@ CHECK_GATES := test-tiers test-foundation test-source-core test-pp-core test-qua
 	test-unicode-names test-source-driver test-driver test-macro-prescan test-macro-definition-ports \
 	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges test-tables test-protocols test-protocol-loops \
 	test-checked-core test-checked-libraries
-TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-half-floats test-ownership-core test-ownership-arrays test-ownership-nullable-loops test-ownership-switch test-ownership-runtime test-ownership-views test-checked-hints test-protocol-certificates test-protocol-call-once \
+TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-half-floats test-ownership-core test-ownership-arrays test-ownership-nullable-loops test-ownership-switch test-ownership-unchecked test-ownership-runtime test-ownership-views test-checked-hints test-protocol-certificates test-protocol-call-once \
 	test-checked-imports \
 	test-native-authoring test-one-language test-project-build test-macro-engine test-macro-native-names test-macro-types test-macro-narrowing \
 	test-macro-worklists test-macro-sizes test-macro-probes test-provenance-core test-c-printer test-examples \
@@ -529,6 +529,10 @@ test-ownership-nullable-loops-admission: build/cesta test-ownership-model
 
 test-ownership-switch: build/cesta
 	python3 -B tests/ownership_switch.py
+
+.PHONY: test-ownership-unchecked
+test-ownership-unchecked: build/cesta
+	python3 -B tests/ownership_unchecked.py --cesta build/cesta
 
 test-ownership-runtime: build/cesta
 	python3 -B tests/ownership_runtime.py
