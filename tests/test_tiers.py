@@ -33,6 +33,8 @@ test-protocol-bound-resources
 test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated
 test-ownership-model test-ownership-admission test-ownership-staging
 test-ownership-arrays-admission test-ownership-nullable-loops-admission
+test-checked-spans-admission test-checked-contracts-admission test-checked-operations-admission
+test-ownership-record-results-admission test-ownership-record-values-admission test-tcalc-event-view
 """.split()
 
 

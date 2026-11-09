@@ -1,0 +1,51 @@
+(cesta checked-c/1
+  (module flat_span)
+  (word-bits 64)
+  (failure flat_span_failure)
+
+  (fn offset
+    (params (rows (span u32 read)) (selector u32))
+    (returns usize)
+    (effects)
+    (body
+      (let row usize (as usize (bit-and selector (u32 255))))
+      (let field u32 (bit-and (shr selector (usize 8)) (u32 255)))
+      (return (as usize (wrap-add (at rows row) field)))))
+
+  (fn prepare
+    (params (fields (span u32 read)) (rows (span u32 read))
+            (guards (span u32 read)) (makes (span u32 read))
+            (scratch (span u32 write)))
+    (returns bool)
+    (effects)
+    (body
+      (var accepted bool true)
+      (for index guards
+        (body
+          (let guard u32 (at guards index))
+          (let first usize (call offset rows guard))
+          (let second usize (call offset rows (shr guard (usize 16))))
+          (if (ne (at fields first) (at fields second))
+            (then (set accepted false)) (else))))
+      (if (not accepted) (then (return false)) (else))
+      (require (le (len makes) (len scratch)))
+      (for index makes
+        (body
+          (let at_index usize (call offset rows (at makes index)))
+          (put scratch index (at fields at_index))))
+      (return true)))
+
+  (fn publish
+    (params (scratch (span u32 read)) (dest (span u32 write)) (count usize))
+    (returns unit)
+    (effects)
+    (body
+      (require (le count (len scratch)))
+      (require (le count (len dest)))
+      (var index usize (usize 0))
+      (while (lt index count)
+        (body
+          (put dest index (at scratch index))
+          (set index (add index (usize 1)))))
+      (return)))
+)

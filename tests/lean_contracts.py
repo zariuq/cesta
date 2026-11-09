@@ -83,11 +83,15 @@ PROTOCOL_MODULES = [
     "Mettapedia.GSLT.LanguageDef.ExecutableProtocolLoopChecks",
 ]
 CHECKED_MODULES = [
+    "Mettapedia.Machines.CMemory.PermissionFlow",
     "Mettapedia.GSLT.LanguageDef.CheckedBytes",
     "Mettapedia.GSLT.LanguageDef.CheckedBytePlans",
     "Mettapedia.GSLT.LanguageDef.CheckedByteSafety",
     "Mettapedia.GSLT.LanguageDef.CheckedByteModules",
     "Mettapedia.GSLT.LanguageDef.CheckedByteControls",
+    "Mettapedia.GSLT.LanguageDef.CheckedScalarSpans",
+    "Mettapedia.GSLT.LanguageDef.CheckedSpanPlacement",
+    "Mettapedia.GSLT.LanguageDef.CheckedScalarOperations",
 ]
 OWNERSHIP_MODULES = [
     "Mettapedia.Machines.CMemory.SpatialLoans",
@@ -191,8 +195,12 @@ def main():
         groups = [OWNERSHIP_MODULES]
     if args.layout_bridge:
         groups.append(LAYOUT_BRIDGE_MODULES)
+    seen = set()
     for group in groups:
         for name in group:
+            if name in seen:
+                continue
+            seen.add(name)
             source = project / (name.replace(".","/")+".lean")
             data = source.read_bytes()
             code = code_without_comments(data.decode())

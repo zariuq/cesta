@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
               "       cesta cc [--cc COMPILER] [--read-warnings] FLAGS SOURCES [OBJECTS/LIBRARIES]\n"
               "       cesta expand [--cc COMPILER] [--presentation native-c/1] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
               "       cesta check-macros MODULE THEORY\n"
-              "       cesta checked check|plan|header FILE.cesta [-o OUTPUT]\n"
+              "       cesta checked check|plan|header|contract FILE.cesta [-o OUTPUT]\n"
               "       cesta export-header [--plan PLAN] EXPORT-SPEC -o OUTPUT.h\n"
               "       cesta export-c [--cc COMPILER] [-o OUTPUT.c] INPUT.cesta [-- NATIVE-FLAGS]\n"
               "       cesta layout check|functions MODULE THEORY\n"

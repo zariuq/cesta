@@ -59,12 +59,17 @@ def action(event):
     if name in ("access","result"):
         assert len(event) == 6
         return f"(.{name} {natural(event[1])} {region(event[2:5])} {boolean(event[5])})"
-    if name == "field-result":
+    if name in ("field-result", "record-result"):
         assert len(event) == 7
-        return f"(.fieldResult {natural(event[1])} {natural(event[2])} {region(event[3:6])} {boolean(event[6])})"
-    if name == "null-field-result":
+        constructor = "fieldResult" if name == "field-result" else "recordResult"
+        return f"(.{constructor} {natural(event[1])} {natural(event[2])} {region(event[3:6])} {boolean(event[6])})"
+    if name in ("null-field-result", "null-record-result"):
         assert len(event) == 2
-        return f"(.nullFieldResult {natural(event[1])})"
+        constructor = "nullFieldResult" if name == "null-field-result" else "nullRecordResult"
+        return f"(.{constructor} {natural(event[1])})"
+    if name == "record-give":
+        assert len(event) == 4
+        return f"(.recordGive {natural(event[1])} {natural(event[2])} {natural(event[3])})"
     if name == "view":
         assert len(event) == 7
         return f"(.view {natural(event[1])} {region(event[2:5])} {natural(event[5])} {boolean(event[6])})"
@@ -148,7 +153,7 @@ def result_spec(declaration):
 
 
 def signature(declaration):
-    assert declaration[0] == "signature" and len(declaration) in (4, 5)
+    assert declaration[0] == "signature" and len(declaration) in (4, 5, 6)
     parameters, variadic, result = declaration[1:4]
     assert parameters[0] == "parameters" and variadic[0] == "variadic"
     ps = []
@@ -181,20 +186,23 @@ def signature(declaration):
         returns = "(.borrowed "+" ".join(natural(n) for n in result[2:5])+" "+boolean(result[5])+" "+boolean(result[6])+")"
     else:
         returns = result_spec([Sym("returns"), Sym("own") if result[1] == "owned" else result[1], *result[2:]])
-    fields = []
-    if len(declaration) == 5:
-        assert declaration[4][0] == "fields"
-        for field in declaration[4][1:]:
+    fields, records = [], []
+    for section, expected, output in zip(declaration[4:], ("fields", "records"), (fields, records)):
+        assert section[0] == expected
+        for field in section[1:]:
             assert len(field) == 3 and field[0] == "field"
             shape = field[2]
             if shape[0] == "static":
                 assert len(shape) == 2
                 code = "(.static "+boolean(shape[1])+")"
+            elif shape[0] == "owned":
+                assert expected == "records" and len(shape) == 3
+                code = "(.owned "+natural(shape[1])+" "+boolean(shape[2])+")"
             else:
                 assert shape[0] == "borrowed" and len(shape) == 6
                 code = "(.borrowed "+" ".join(natural(n) for n in shape[1:4])+" "+boolean(shape[4])+" "+boolean(shape[5])+")"
-            fields.append("("+natural(field[1])+", "+code+")")
-    return "⟨["+", ".join(ps)+"], "+("true" if variadic[1] == "read" else "false")+", "+returns+", ["+", ".join(fields)+"]⟩"
+            output.append("("+natural(field[1])+", "+code+")")
+    return "⟨["+", ".join(ps)+"], "+("true" if variadic[1] == "read" else "false")+", "+returns+", ["+", ".join(fields)+"], ["+", ".join(records)+"]⟩"
 
 
 def function(declaration):
@@ -206,10 +214,21 @@ def function(declaration):
 
 
 def module_parts(record):
-    assert record[0] == "Ownership" and isinstance(record[1],Text) and record[1].data == b"cesta-ownership/2"
+    assert record[0] == "Ownership" and isinstance(record[1],Text) and record[1].data in (b"cesta-ownership/2", b"cesta-ownership/3")
     foreign, functions = [], []
+    abi = False
     for item in record[2:]:
-        if item[0] == "foreign":
+        if item[0] == "abi":
+            assert not abi and record[1].data == b"cesta-ownership/3"
+            assert len(item) == 4 and isinstance(item[1],Text) and item[1].data == b"cesta-abi/1"
+            assert len(item[2]) == 2 and item[2][0] == 'sha256' and isinstance(item[2][1],Text)
+            digest = item[2][1].data
+            assert len(digest) == 64 and all(c in b'0123456789abcdef' for c in digest)
+            assert item[3][0] == 'layout' and item[3][1][0] == 'target'
+            # Native header/layout binding is checked when the frontend
+            # regenerates the plan. This digest is not a Lean ABI theorem.
+            abi = True
+        elif item[0] == "foreign":
             assert len(item) == 4 and item[3][0] == "obligation" and len(item[3]) == 2 and isinstance(item[3][1],Text)
             foreign.append((str(item[1]),signature(item[2]),item[3][1].data.decode()))
         else:
@@ -237,10 +256,10 @@ def mutations(declaration):
     assert ambient[4][0]=='ambient'
     ambient[4].append([Sym('99999999'),Sym('4')])
     variants.append(ambient)
-    for target in ("access","borrow","end","release","move","invoke","result","call-argument","call-rights","call-extent","input-extent","view","view-return-extent","restrict","field-key","field-origin","field-extent","field-omitted"):
+    for target in ("access","borrow","end","release","move","invoke","result","call-argument","call-rights","call-extent","input-extent","view","view-return-extent","restrict","field-key","field-origin","field-extent","field-omitted","record-key","record-origin","record-extent","record-omitted","record-rights","owner-key","owner-holder","owner-family","owner-omitted"):
         changed = copy.deepcopy(declaration)
         for event in walk(changed[6][1:]):
-            event_name = "invoke" if target in ("call-argument", "call-rights", "call-extent") else "root" if target == "input-extent" else "result" if target == "view-return-extent" else "field-result" if target.startswith("field-") else target
+            event_name = "invoke" if target in ("call-argument", "call-rights", "call-extent") else "root" if target == "input-extent" else "result" if target == "view-return-extent" else "field-result" if target.startswith("field-") else "record-result" if target.startswith("record-") else "record-give" if target.startswith("owner-") else target
             if event[0] != event_name:
                 continue
             if target == "access": event[1] = Sym("99999999")
@@ -268,10 +287,15 @@ def mutations(declaration):
                 if changed[5][1] != "view" or int(str(event[4])) == 0: continue
                 event[4] = Sym(str(int(str(event[4]))-1))
             elif target == "restrict": event[4] = Sym("99999999")
-            elif target == "field-key": event[1] = Sym("99999999")
-            elif target == "field-origin": event[3] = Sym("99999999")
-            elif target == "field-extent": event[5] = Sym(str(int(str(event[5]))+1))
-            elif target == "field-omitted":
+            elif target in ("field-key", "record-key"): event[1] = Sym("99999999")
+            elif target in ("field-origin", "record-origin"): event[3] = Sym("99999999")
+            elif target in ("field-extent", "record-extent"): event[5] = Sym(str(int(str(event[5]))+1))
+            elif target == "record-rights": event[6] = Sym("write" if event[6] == "read" else "read")
+            elif target == "owner-key": event[1] = Sym("99999999")
+            elif target == "owner-holder": event[2] = Sym("99999999")
+            elif target == "owner-family": event[3] = Sym(str(int(str(event[3]))+1))
+            elif target == "owner-omitted": event[:] = [Sym("null-record-result"), event[1]]
+            elif target in ("field-omitted", "record-omitted"):
                 # Replacing the postcondition with a valid ordinary read keeps
                 # the loan check intact, but must fail the field-result contract.
                 event[:] = [Sym("access"), *event[2:]]

@@ -27,7 +27,13 @@ def main():
                       "#define TWICE(x) ((x) + (x))\n"
                       "_Static_assert(TWICE(3) == 6, \"expansion\");\n"
                       "unsigned f(unsigned x) { return TWICE(x); }\n")
-    results = {}
+    foreign = work / "foreign.cesta"
+    foreign.write_text('''(cesta checked-c/1 (module boundary) (failure boundary_failure)
+      (foreign mix native_mix (params (a (span u32 read) data) (b (span u32 write) data_len))
+        (returns unit) (effects) (obligation "Reads a and writes b; retains no pointer."))
+      (fn call_mix (params (a (span u32 read)) (b (span u32 write)))
+        (returns unit) (effects) (body (call mix a b) (return))))''')
+    results, contracts = {}, {}
     for compiler in ("gcc", "clang"):
         for level in ("0", "2"):
             commands = run(["make", "-s", "-n", "-B", "build/cesta",
@@ -45,10 +51,19 @@ def main():
             if b"(types" not in result or b"(from \"TWICE\"" not in result:
                 raise RuntimeError("portable build did not retain typed macro provenance")
             results[compiler, level] = result
+            contracts[compiler, level] = (
+                run([str(binary), "checked", "contract", "checked/examples/CopySpan.cesta"]),
+                run([str(binary), "checked", "contract", str(foreign)]))
+            foreign_c = run([str(binary), "export-c", str(foreign)])
+            if b"void native_mix(const uint32_t *, uint32_t *, size_t);" not in foreign_c:
+                raise RuntimeError("host build changed the foreign span ABI projection")
             print(compiler, "-O" + level, "production build and typed provenance pass", flush=True)
     for compiler in ("gcc", "clang"):
         if results[compiler, "0"] != results[compiler, "2"]:
             raise RuntimeError(compiler + ": optimization changed the tool's analysis")
+    if len(set(contracts.values())) != 1:
+        raise RuntimeError("host compiler/optimization changed the emitted span contract")
+    print("span contract identical across the four production-tool builds", flush=True)
 
 
 if __name__ == "__main__":

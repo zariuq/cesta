@@ -85,6 +85,17 @@ BYTE VIEWS AND OWNING BUFFER RECORDS
   (view WriteBytes data len write)
   (view Buffer data len write (owns heap))
 
+An optional element type extends the same declaration to scalar spans:
+
+  (view ReadWords data len read u32)
+  (view WordBuffer data len write u32 (owns heap))
+
+Supported elements are bool, u8, u16, u32, u64 and usize. The pointer's C type
+and width must match; bool is not interchangeable with u8. Lengths count elements.
+The permission footprint records bytes, using checked count-times-stride
+arithmetic. Copying another view's length retains its element count. The old
+declarations without an element type retain their byte interpretation.
+
 These name ordinary two-field structure typedefs: a byte pointer and an
 unsigned size field. The record layout and ABI remain C's. Constructing a
 view checks that its length fits a precise source extent. A known array
@@ -156,8 +167,62 @@ postconditions describe replacement or consumption through a record pointer:
 
 stores-field must establish the declared input lifetime on every return path.
 takes-field consumes an owning field. A returned borrow never carries release
-authority, including a mutable interior pointer from an owned record. General
-reference-bearing record results still require a result-field interface.
+authority, including a mutable interior pointer from an owned record. Nested
+output records and records returned by value use complete field interfaces.
+
+Whole output records can name nested borrowed-field lifetimes:
+
+  (function produce
+    (stores-record 2
+      ((firing item) (borrow 0 item))
+      ((profile) (borrow 1))))
+
+The output parameter is an exclusive pointer to an initialized reference record.
+Every reference field of that record must appear exactly once. Paths traverse
+inline records and constant array elements, for example (rows 1 item); they end
+at a declared pointer field. A borrow origin with a path names the referent of
+that input field, rather than the storage of its containing record. With no
+path it names the ordinary input pointer. static remains an explicit origin.
+
+Each return path must establish every postcondition. Local stack references,
+wrong origins, incomplete field lists and ambiguous paths are refused. A caller
+retains the referent's loan after the source record disappears, provided the
+referent itself remains live. Repeated fields in arrays have distinct keys from
+their ABI offsets. The emitted field signatures use the existing
+independent field-postcondition checker. This form covers borrowed outputs;
+owning fields through output pointers remain a separate extension.
+
+Records returned by value declare their field origins directly:
+
+  (function produce
+    (returns-record
+      ((firing item) (borrow 0 item))
+      ((profile) (borrow 1))))
+
+Initialization, assignment, direct forwarding of another call, and compound
+literal returns carry the same contracts. All reference fields must be listed,
+including inline array elements. A returned field retains the original input
+referent; a local stack value cannot become a persistent result. Access rights
+and nullability come from the record declaration. A returned record with live
+owning fields cannot be overwritten or discarded.
+
+Owning results transfer release authority once per field:
+
+  (record Box (field item (owns heap nullable)))
+  (function make (returns-record ((item) (owns heap))))
+
+Each successful return consumes the callee's matching authority. Active borrows
+prevent that transfer. A null field is allowed only when declared nullable.
+The caller receives an owner of the complete pointee type and must release or
+transfer it. Nested owning record arrays apply this rule to each element;
+copying an already moved element is refused. Result contracts do not infer a
+dynamic allocation extent from an arbitrary pointer field.
+
+A conditional borrowed pointer or null retains the borrow's original lifetime
+and becomes nullable. Dereferencing it requires a non-null guard. This rule
+does not permit an optional owning-pointer copy; ownership needs an explicit
+branch with a checked move. Returning a nullable pointer into a local object
+is still refused.
 
 OPAQUE CAPABILITIES
 
@@ -326,8 +391,43 @@ Foreign parameter effects and implementation behavior remain named obligations.
 Recorded field postconditions include their destination keys and original
 input lifetimes. Kernel admission checks that every return supplies them;
 changed keys, origins, extents and omitted field results are refused.
+New plans emit cesta-ownership/3. It adds
+field-offset result signatures, borrowed/static result observations and owning
+field transfers. Admission checks complete unique result keys, original input
+lifetimes, matching allocator families and consumption of every returned owner.
+Existing cesta-ownership/2 plans remain accepted by the admission runner.
 Pointer-to-pointer stores/preserves postconditions are still checked by the
 native frontend; their full relational postcondition is not yet in this plan.
+
+ABI AND HEADER BINDING
+
+Use ordinary #include declarations to import a native library's public types.
+The ownership checker reads those actual headers through the selected compiler
+environment; a second copy of the library's typedefs is not an ABI witness.
+
+The plan contains one cesta-abi/1 SHA-256 fingerprint, along with its readable
+target, record sizes/alignments/field offsets, callable parameter/result layouts,
+and native-view element widths. The fingerprint covers that layout, the
+preprocessed translation unit, and the contents of the headers actually read.
+Input chunks are length delimited. Header paths are not hashed, so moving a
+source tree without changing its contents preserves the fingerprint unless
+the program itself observes a path through a C macro such as __FILE__.
+
+An optional contract pins the previously inspected interface:
+
+  (abi-fingerprint "64 lowercase hexadecimal digits from the emitted plan")
+
+Compiling or exporting that checked unit recomputes the fingerprint and refuses
+a changed header, target or source. The clause is excluded from its own input.
+To adopt an intentional interface change, omit the pin, inspect the regenerated
+layout and plan, then use the new fingerprint. Ordinary unannotated C requires
+no pin and continues to delegate to the C compiler.
+
+The fingerprint detects drift; it is neither a signature nor a proof of the
+C layout algorithm. Lean admission checks the recorded permission program.
+Native header binding is established by regenerating that plan in its actual
+compiler environment. The compiler and C-to-plan projection remain separate
+qualification boundaries.
 
 The underlying CMemory heap is parametric in its cell permission algebra.
 Exclusive cells and fractional read permissions are existing instances. The

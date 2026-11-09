@@ -1,0 +1,13 @@
+(cesta checked-c/1
+  (module copy_span)
+  (word-bits 64)
+  (failure copy_span_failure)
+  (fn copy_u32
+    (params (source (span u32 read)) (destination (span u32 write)))
+    (returns unit)
+    (effects)
+    (body
+      (require (le (len source) (len destination)))
+      (for index source
+        (body (put destination index (at source index))))
+      (return))))
