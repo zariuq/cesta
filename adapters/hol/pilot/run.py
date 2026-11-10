@@ -124,7 +124,7 @@ print_endline "CESTA_SEMANTIC_MUTANT_REFUSED";;
     driver=work/'proof.ml'
     driver.write_text('needs "x86/proofs/base.ml";;\n'+
         '\n'.join('loadt '+json.dumps(str(path))+';;' for path in
-            [declarations,HERE/'span_words.ml',HERE/'copy_loop.ml',HERE/'copy_function.ml',
+            [declarations,HERE/'span_words.ml',HERE.parent/'x86_support.ml',HERE/'copy_loop.ml',HERE/'copy_function.ml',
              HERE/'span_resources.ml',mutant])+
         '\ncheck_axioms ();;\nprint_endline "CESTA_AXIOMS_CHECKED";;\n'+
         'Printf.printf "CESTA_ACCESS_TRACE %s\\n" (string_of_thm cesta_copy_trace);;\n'+

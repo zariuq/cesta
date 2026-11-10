@@ -519,7 +519,7 @@ CHECK_GATES := test-tiers test-foundation test-source-core test-pp-core test-qua
 	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges test-tables test-protocols test-protocol-loops \
 	test-checked-core test-checked-libraries test-checked-spans test-checked-contracts
 TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-builds test-gnu-extensions test-half-floats test-ownership-core test-ownership-arrays test-ownership-nullable-loops test-ownership-switch test-ownership-unchecked test-ownership-runtime test-ownership-views test-checked-hints test-protocol-certificates test-protocol-call-once \
-	test-checked-imports test-checked-flat-spans test-checked-foreign-abi test-checked-operations test-ownership-record-results test-ownership-record-values test-ownership-abi \
+	test-checked-imports test-checked-flat-spans test-checked-foreign-abi test-checked-operations test-ownership-record-results test-ownership-record-values test-ownership-whole-views test-ownership-abi \
 	test-native-authoring test-one-language test-project-build test-macro-engine test-macro-native-names test-macro-types test-macro-narrowing \
 	test-macro-worklists test-macro-sizes test-macro-probes test-provenance-core test-c-printer test-examples \
 	test-compact-examples test-grammar-trees test-whole-program-trees test-presentation-driver \
@@ -532,7 +532,7 @@ QUALIFY_GATES := $(TEST_GATES) test-corpora test-c11parser test-lean test-macro-
 	test-layout-sanitizers test-layout-bridge test-layout-model test-operation-audit test-operation-model \
 	test-operations test-operation-proposal test-table-model test-table-admission test-operation-protocol \
 	test-protocol-model test-protocol-admission test-protocol-loop-admission test-protocol-bound-resources test-checked-model test-checked-admission test-checked-sanitizers test-checked-generated \
-	test-ownership-model test-ownership-admission test-ownership-views-admission test-ownership-staging test-ownership-switch-exhaustive test-ownership-arrays-admission test-ownership-nullable-loops-admission test-checked-spans-admission test-checked-contracts-admission test-checked-operations-admission test-ownership-record-results-admission test-ownership-record-values-admission test-tcalc-event-view
+	test-ownership-model test-ownership-admission test-ownership-views-admission test-ownership-staging test-ownership-switch-exhaustive test-ownership-arrays-admission test-ownership-nullable-loops-admission test-checked-spans-admission test-checked-contracts-admission test-checked-operations-admission test-ownership-record-results-admission test-ownership-record-values-admission test-ownership-whole-views-admission test-tcalc-event-view
 
 .PHONY: test-ownership-smoke test-ownership-core test-ownership-switch test-ownership-runtime test-ownership-model test-ownership-admission test-ownership-views test-ownership-views-admission test-ownership-staging
 test-ownership-smoke: build/cesta
@@ -572,6 +572,13 @@ test-ownership-record-values: build/cesta
 
 test-ownership-record-values-admission: build/cesta test-ownership-model
 	python3 -B tests/ownership_record_values.py --admit
+
+.PHONY: test-ownership-whole-views test-ownership-whole-views-admission
+test-ownership-whole-views: build/cesta
+	python3 -B tests/ownership_whole_views.py
+
+test-ownership-whole-views-admission: build/cesta test-ownership-model
+	python3 -B tests/ownership_whole_views.py --admit
 
 .PHONY: test-ownership-abi
 test-ownership-abi: build/cesta

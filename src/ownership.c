@@ -142,6 +142,11 @@ static bool reference_type(Ownership *o, const CeType *type) { return pointer(ty
 static bool reference_read_only(Ownership *o, const CeType *type) {
     View *v = view(o,type); return v ? !v->write : read_only(type);
 }
+static bool view_origin_compatible(Ownership *o, const CeType *target, const CeType *source) {
+    View *to = view(o,target), *from = view(o,source);
+    return to && from && !from->family && (!to->write || from->write) &&
+        to->stride == from->stride && ce_type_similar(to->data->type->base,from->data->type->base);
+}
 static Capability *capability(Ownership *o, const CeType *type) {
     if (!ce_type_record(type)) return NULL;
     for (size_t i = 0; i < o->ncapabilities; ++i)
@@ -287,6 +292,24 @@ static size_t root(Ownership *o, unsigned long long count, bool write, const cha
     append_loan(o,(Loan){id,SIZE_MAX,{id,0,count},write,true,brand,o->state.scope});
     if (o->plan) fprintf(o->plan," (root %zu %llu %s %s %u)\n",id,count,write ? "write" : "read",origin,brand);
     return id;
+}
+/* A unit is an entire dynamic span, not a byte. The emitted whole-root event
+ * has an arbitrary-extent interpretation; numeric pointer operations below
+ * must never consume this unit as a concrete C pointee. */
+static size_t whole_root(Ownership *o, bool write) {
+    size_t id = o->state.next++;
+    append_loan(o,(Loan){id,SIZE_MAX,{id,0,1},write,true,0,o->state.scope});
+    if (o->plan) fprintf(o->plan," (whole-root %zu %s)\n",id,write ? "write" : "read");
+    return id;
+}
+static bool whole_range(Ownership *o, Range range) {
+    Function *f = o->function;
+    if (!f || !range.root) return false;
+    for (size_t i = 0; i < f->nparameters; ++i)
+        if (view(o,f->parameters[i]->type) && f->input_roots[i] == range.root) return true;
+    for (size_t i = 0; i < f->nfields; ++i)
+        if (view(o,f->fields[i].field->type) && f->fields[i].input == range.root) return true;
+    return false;
 }
 static bool borrow(Ownership *o, const CeTree *site, Reference source, bool write, size_t *id) {
     if (source.null) { *id = SIZE_MAX; return true; }
@@ -571,6 +594,9 @@ static bool pointer_binding(Ownership *o, const CeTree *site, CeEntity *e, Refer
         if (post) {
             if (!source.null && !within(post->allowed.range,source.range))
                 return fail(o,site,"stored field escapes its declared input lifetime");
+            if (view(o,e->type) && (!source.exact || source.range.first != post->allowed.range.first ||
+                source.range.count != post->allowed.range.count))
+                return fail(o,site,"stored view must preserve the complete declared input extent");
             v->output_initialized = true;
         }
         if ((source.null || source.nullable) && !spec->nullable) return fail(o,site,"nullable value stored under a non-null field contract");
@@ -633,7 +659,7 @@ static CeEntity *named_variable(Ownership *o, const CeTree *t) {
 }
 static bool narrow_result(Ownership *o, const CeTree *site, Reference *r,
                            CeType *type, const CeAtom *path) {
-    if (!path || !r->exact) return true;
+    if (!path || !path->len || !r->exact) return true;
     if (!pointer(type)) return fail(o,site,"borrow result origin is not a pointer");
     type = type->base;
     for (size_t i = 0; i < path->len; ++i) {
@@ -646,11 +672,14 @@ static bool narrow_result(Ownership *o, const CeTree *site, Reference *r,
         CeRecord *record = type->tag->record;
         for (size_t j = 0; j < record->nmembers; ++j) if (same(record->members[j].name,name->text)) {
             type = record->members[j].type;
-            if (pointer(type)) {
+            if (reference_type(o,type)) {
                 Variable *value = after.variable ? binding_id(o,after.variable->id) : NULL;
                 if (!value || !value->initialized || value->moved)
                     return fail(o,site,"borrow result refers to an unavailable record field");
-                *r = value->reference; type = type->base;
+                *r = value->reference;
+                if (view(o,type)) {
+                    if (i+1 != path->len) return fail(o,site,"borrow path must retain a view as one value");
+                } else type = type->base;
                 reference_authority(o,r,record->members[j].type);
             }
             found = true; break;
@@ -743,6 +772,8 @@ static bool call_with_record(Ownership *o, const CeTree *t, Reference *out, cons
         bool is_pointer = reference_type(o,at->type) || at->type->kind == CE_T_ARRAY ||
             (i < ft->nparameters && reference_type(o,ft->parameters[i]));
         if (!is_pointer) continue;
+        if (whole_range(o,refs[i].range) && (i >= ft->nparameters || !view(o,ft->parameters[i])))
+            return fail(o,arg,"whole dynamic spans require a view parameter; a fixed pointee cannot establish their bounds");
         if (i < ft->nparameters && f->foreign && !f->release_family &&
             pointer(ft->parameters[i]) && pointer(ft->parameters[i]->base) &&
             !read_only(ft->parameters[i]) && f->stores[i] == -1)
@@ -788,6 +819,8 @@ static bool call_with_record(Ownership *o, const CeTree *t, Reference *out, cons
     }
     for (size_t i = 0; i < f->nfields; ++i) {
         FieldPart *part = &f->fields[i]; Reference r = field_refs[i];
+        if (whole_range(o,r.range) && !view(o,part->field->type))
+            return fail(o,t,"whole dynamic spans cannot satisfy fixed-pointee record field contracts");
         if (r.null) {
             if (!part->field->nullable) return fail(o,t,"null record field violates the call contract");
             if (part->owning && r.owner) binding_id(o,r.owner)->moved = true;
@@ -852,7 +885,8 @@ static bool call_with_record(Ownership *o, const CeTree *t, Reference *out, cons
         StoredField *cell = field_cell(o,t,post->field,slot);
         Reference value = post->source == -2 ? static_reference(post->field->nullable) :
             (post->source < (int)ft->nparameters ? refs[post->source] : field_refs[post->source-ft->nparameters]);
-        value.family = 0; value.owner = 0; value.exact = false;
+        value.family = 0; value.owner = 0;
+        if (!view(o,post->field->type)) value.exact = false;
         value.nullable = post->field->nullable;
         if (!pointer_binding(o,t,&cell->entity,value)) return false;
     }
@@ -882,7 +916,8 @@ static bool call_with_record(Ownership *o, const CeTree *t, Reference *out, cons
             } else {
                 value = post->source == -2 ? static_reference(post->field->nullable) :
                     (post->source < (int)ft->nparameters ? refs[post->source] : field_refs[post->source-ft->nparameters]);
-                value.family = 0; value.owner = 0; value.exact = false;
+                value.family = 0; value.owner = 0;
+                if (!view(o,post->field->type)) value.exact = false;
             }
             value.nullable = post->field->nullable;
             if (!pointer_binding(o,t,&cell->entity,value)) return false;
@@ -1008,7 +1043,7 @@ static bool record_copy(Ownership *o, const CeTree *site, CeType *type, Place de
     for (size_t i = 0; i < record->nmembers; ++i) {
         CeMember *m = &record->members[i]; Place to, from;
         if (!field(o,site,destination,type,m->name,&to) || !field(o,site,source,type,m->name,&from)) return false;
-        if (pointer(m->type)) {
+        if (reference_type(o,m->type)) {
             FieldSpec *spec = field_spec(o,type,m->name);
             Reference saved;
             if (!source.exact) {
@@ -1110,10 +1145,13 @@ static bool record_initializer(Ownership *o, const CeTree *t, CeType *type, Plac
     for (size_t i = 0; i < record->nmembers; ++i) {
         CeMember *m = &record->members[i]; Place target;
         if (!field(o,t,destination,type,m->name,&target)) return false;
-        if (pointer(m->type)) {
+        if (reference_type(o,m->type)) {
             if (!target.variable) return fail(o,t,"pointer field has no lifetime declaration");
             Reference source = {.null=true,.via=SIZE_MAX};
-            if (values[i]) {
+            if (view(o,m->type)) {
+                if (!values[i] || !view_initializer(o,values[i],view(o,m->type),&source))
+                    return fail(o,t,"view field requires an explicit whole pointer/length initializer");
+            } else if (values[i]) {
                 if (kind(o,values[i]) != CE_K_InitializerExpression ||
                     !expression(o,values[i]->children[0],&source)) return false;
             }
@@ -1159,22 +1197,35 @@ static bool view_initializer(Ownership *o, const CeTree *t, View *spec, Referenc
     if (!data || !length) return fail(o,t,"bounded view requires explicit pointer and length");
     const CeExpr *extent = typed(o,length);
     unsigned long long count = extent && extent->constant ? extent->value : 0;
-    bool known = extent && extent->constant;
+    bool known = extent && extent->constant, whole = false, length_checked = false;
+    Reference length_source = {.null=true,.via=SIZE_MAX};
     if (!known && kind(o,length) == CE_K_Member) {
-        CeEntity *e = named_variable(o,length->children[0]);
-        View *parent = e ? view(o,e->type) : NULL;
+        const CeExpr *base = typed(o,length->children[0]);
+        View *parent = base ? view(o,base->type) : NULL;
         if (parent && same(parent->length->name,ce_sema_name(o->sema,length->children[1]))) {
-            Variable *v = &o->state.variables[e->id-1];
-            if (v->declared && v->initialized) { count = v->reference.range.count / parent->stride; known = true; }
+            if (!expression(o,length->children[0],&length_source) ||
+                !checked_reference(o,length,length_source,false)) return false;
+            length_checked = true; known = true;
+            whole = whole_range(o,length_source.range);
+            if (whole && parent->stride != spec->stride)
+                return fail(o,length,"whole-view reconstruction must preserve element width");
+            count = whole ? 1 : length_source.range.count / parent->stride;
         }
     }
     if (!known) return fail(o,length,"dynamic view length needs a checked span constructor");
     if (count > ULLONG_MAX / spec->stride) return fail(o,length,"view element count overflows its byte extent");
-    count *= spec->stride;
+    if (!whole) count *= spec->stride;
     Reference ignored;
-    if (!expression(o,length,&ignored)) return false;
+    if (!length_checked && !expression(o,length,&ignored)) return false;
     Reference source;
     if (!expression(o,data,&source)) return false;
+    if (whole) {
+        if (!whole_range(o,source.range) || !source.exact ||
+            source.range.root != length_source.range.root || source.range.first != length_source.range.first ||
+            source.range.count != length_source.range.count)
+            return fail(o,t,"whole-view pointer and length must have the same origin");
+    } else if (whole_range(o,source.range))
+        return fail(o,t,"a numeric length cannot establish a subextent of a dynamic span");
     if (source.authority) return fail(o,data,"opaque capabilities cannot be exposed as byte views");
     if (spec->family) {
         if (source.family != spec->family || count != source.range.count)
@@ -1188,8 +1239,11 @@ static bool view_initializer(Ownership *o, const CeTree *t, View *spec, Referenc
     if (!spec->family) { source.family = 0; source.owner = 0; }
     if (!access(o,t,source.via,source.range,spec->write)) return false;
     if (o->plan) {
-        fprintf(o->plan," (view %zu ",source.via); range_plan(o->plan,source.range);
-        fprintf(o->plan," %llu %s)\n",count,spec->write ? "write" : "read");
+        if (whole) fprintf(o->plan," (whole-view %zu %zu %s)\n",source.via,source.range.root,spec->write ? "write" : "read");
+        else {
+            fprintf(o->plan," (view %zu ",source.via); range_plan(o->plan,source.range);
+            fprintf(o->plan," %llu %s)\n",count,spec->write ? "write" : "read");
+        }
     }
     *out = source;
     return true;
@@ -1278,6 +1332,14 @@ static bool expression(Ownership *o, const CeTree *t, Reference *out) {
         *out = (Reference){p.range,p.via,p.exact,false,false,0,0,0};
         reference_authority(o,out,type->type); return true;
     }
+    if (k == CE_K_Member && view_component(o,t)) {
+        if (type->type->qualifiers & (CE_Q_VOLATILE | CE_Q_ATOMIC))
+            return fail(o,t,"volatile and atomic view metadata require a native resource contract");
+        Reference span;
+        if (!expression(o,t->children[0],&span) || !checked_reference(o,t,span,false)) return false;
+        if (pointer(type->type)) *out = span;
+        return true;
+    }
     if (k == CE_K_Member || k == CE_K_PointerMember || k == CE_K_Indirection || k == CE_K_Subscript) {
         if (type->type->qualifiers & (CE_Q_VOLATILE | CE_Q_ATOMIC))
             return fail(o,t,"volatile and atomic accesses require a native resource contract");
@@ -1298,18 +1360,13 @@ static bool expression(Ownership *o, const CeTree *t, Reference *out) {
         Place p;
         if (!place(o,t,&p) || !access(o,t,p.via,p.range,false)) return false;
         if (type->type->kind == CE_T_ARRAY) *out = (Reference){p.range,p.via,p.exact,false,false,0,0,0};
-        else if (pointer(type->type)) {
+        else if (reference_type(o,type->type)) {
             if (!p.exact && !p.variable && k == CE_K_Member)
                 return uniform_array_reference(o,t,p,out);
             if (p.variable && p.variable->id > o->sema->nentities) {
                 Variable *v = binding_id(o,p.variable->id);
                 if (!v || !v->initialized || v->moved) return fail(o,t,"reference field is uninitialized or moved");
                 *out = v->reference; reference_authority(o,out,type->type); return true;
-            }
-            if (k == CE_K_Member && view(o,typed(o,t->children[0])->type)) {
-                CeEntity *e = named_variable(o,t->children[0]);
-                if (!e) return fail(o,t,"view member access requires a named checked view");
-                *out = o->state.variables[e->id-1].reference; return true;
             }
             if (p.output < 0) return fail(o,t,"pointer-valued subobject requires a field lifetime contract");
             Variable *v = &o->state.variables[o->function->parameters[p.output]->id-1];
@@ -1527,6 +1584,7 @@ static bool place(Ownership *o, const CeTree *t, Place *out) {
     if (k == CE_K_Indirection || k == CE_K_PointerMember) {
         Reference r;
         if (!expression(o,t->children[0],&r) || !checked_reference(o,t,r,true)) return false;
+        if (whole_range(o,r.range)) return fail(o,t,"dereferencing a dynamic span needs a checked bounded operation");
         Place base = {r.range,r.via,r.exact,NULL,-1};
         if (k == CE_K_Indirection) {
             *out = base;
@@ -1556,6 +1614,7 @@ static bool place(Ownership *o, const CeTree *t, Place *out) {
             if (!it->constant) return fail(o,t,"dynamic pointer subscript requires a checked bounded view");
             Reference r;
             if (!expression(o,base,&r) || !checked_reference(o,t,r,true)) return false;
+            if (whole_range(o,r.range)) return fail(o,t,"indexing a dynamic span needs a checked bounded operation");
             p = (Place){r.range,r.via,r.exact,NULL,-1};
             if (!p.exact && it->value != 0)
                 return fail(o,t,"interior reference has no precise remaining extent; use a bounded view");
@@ -1720,6 +1779,9 @@ static bool return_record(Ownership *o, const CeTree *site, const CeTree *value)
         if (!r.null) {
             if (!within(post->allowed.range,r.range))
                 return fail(o,site,"returned record field escapes its declared input lifetime");
+            if (view(o,post->field->type) && (!r.exact || r.range.first != post->allowed.range.first ||
+                r.range.count != post->allowed.range.count))
+                return fail(o,site,"returned view must preserve the complete declared input extent");
             if (!access(o,site,r.via,r.range,post->field->write)) return false;
         }
         if (o->plan) {
@@ -2021,7 +2083,7 @@ static bool reference_field_path(Ownership *o, CeType *type, const CeAtom *path,
         if (i+1 == path->len) *field = field_spec(o,type,member->name);
         type = member->type;
     }
-    return *field != NULL || malformed(o,path,"reference path must end at a declared pointer field");
+    return *field != NULL || malformed(o,path,"reference path must end at a declared pointer or whole-view field");
 }
 
 static bool append_field_post(Ownership *o, Function *f, const CeAtom *site,
@@ -2044,6 +2106,14 @@ static bool resolve_post_origin(Ownership *o, Function *f, FieldPost *post) {
     if (!post->source_path) {
         if (post->source >= 0 && f->families[post->source])
             return fail(o,f->body,"borrowed record result cannot retain a consumed owning input");
+        if (post->source >= 0 && (view(o,post->field->type) != NULL) !=
+            (view(o,f->entity->type->parameters[post->source]) != NULL))
+            return fail(o,f->body,"a whole-view result must retain a whole-view input");
+        if (post->source >= 0 && view(o,post->field->type) &&
+            !view_origin_compatible(o,post->field->type,f->entity->type->parameters[post->source]))
+            return fail(o,f->body,"whole-view result has incompatible elements or access rights");
+        if (post->source < 0 && view(o,post->field->type))
+            return fail(o,f->body,"whole-view results require an explicit input extent");
         return true;
     }
     FieldSpec *field; unsigned long long offset;
@@ -2052,6 +2122,10 @@ static bool resolve_post_origin(Ownership *o, Function *f, FieldPost *post) {
     for (size_t k = 0; k < f->nfields; ++k)
         if (f->fields[k].parameter == (size_t)post->source && f->fields[k].offset == offset) {
             if (f->fields[k].owning) return fail(o,f->body,"stored reference cannot outlive a consumed input field");
+            if ((view(o,post->field->type) != NULL) != (view(o,field->type) != NULL))
+                return fail(o,f->body,"a whole-view field result must retain a whole-view origin");
+            if (view(o,post->field->type) && !view_origin_compatible(o,post->field->type,field->type))
+                return fail(o,f->body,"whole-view field result has incompatible elements or access rights");
             post->source = field->is_static ? -2 : (int)(f->entity->type->nparameters+k);
             return true;
         }
@@ -2073,7 +2147,7 @@ static bool complete_record_result(Ownership *o, Function *f, CeType *type, unsi
     for (size_t i = 0; i < type->tag->record->nmembers; ++i) {
         CeMember *member = &type->tag->record->members[i];
         if (member->offset > ULLONG_MAX-offset) return fail(o,f->body,"result member offset overflows");
-        if (pointer(member->type)) {
+        if (reference_type(o,member->type)) {
             bool found = false;
             for (size_t j = 0; j < f->nresults; ++j)
                 found |= f->results[j].offset == offset+member->offset;
@@ -2120,10 +2194,16 @@ static bool signature(Ownership *o, Function *f, const CeAtom *spec) {
                 return malformed(o,part,"duplicate, conflicting or non-pointer result contract");
             size_t index;
             if (!natural(part->items[1],&index) || index >= f->entity->type->nparameters ||
-                !pointer(f->entity->type->parameters[index])) return malformed(o,part,"invalid borrowed-result parameter");
+                !reference_type(o,f->entity->type->parameters[index])) return malformed(o,part,"invalid borrowed-result parameter");
             f->result_from = (int)index;
             size_t n = part->len-2;
             if (n && symbol(part->items[part->len-1],"nullable")) { f->result_nullable = true; --n; }
+            if (view(o,f->entity->type->parameters[index]) &&
+                (!view(o,f->entity->type->base) || n || f->result_nullable))
+                return malformed(o,part,"whole-view result requires the complete nonnullable input view");
+            if (view(o,f->entity->type->parameters[index]) &&
+                !view_origin_compatible(o,f->entity->type->base,f->entity->type->parameters[index]))
+                return malformed(o,part,"whole-view result has incompatible elements or access rights");
             CeAtom *path = ce_alloc(o->arena,sizeof(*path));
             *path = (CeAtom){.kind=CE_ATOM_LIST,.items=part->items+2,.len=n}; f->result_path = path;
         } else if (head(part,"stores") && part->len == 3) {
@@ -2183,10 +2263,12 @@ static bool signature(Ownership *o, Function *f, const CeAtom *spec) {
                 } else if (!symbol(origin,"static")) {
                     size_t index;
                     if (!head(origin,"borrow") || origin->len < 2 || !natural(origin->items[1],&index) ||
-                        index >= f->entity->type->nparameters || !pointer(f->entity->type->parameters[index]))
+                        index >= f->entity->type->nparameters || !reference_type(o,f->entity->type->parameters[index]))
                         return malformed(o,origin,"record lifetime requires static or borrow with an input index");
                     source = (int)index;
                     if (origin->len > 2) {
+                        if (view(o,f->entity->type->parameters[index]))
+                            return malformed(o,origin,"whole-view origin cannot be split into field paths");
                         CeAtom *path = ce_alloc(o->arena,sizeof(*path));
                         *path = (CeAtom){.kind=CE_ATOM_LIST,.items=origin->items+2,.len=origin->len-2,.offset=origin->offset};
                         source_path = path;
@@ -2304,7 +2386,14 @@ static bool function_body(Ownership *o, Function *f) {
             size_t id = root(o,size,!read_only(e->type),f->families[i] ? "heap" : "input",f->families[i]);
             f->input_roots[i] = id;
             v->reference = (Reference){{id,0,size},id,true,false,f->nullable[i],f->families[i],f->families[i] ? e->id : 0,0};
-        } else if (view(o,e->type)) return fail(o,e->declaration,"native view parameters require a dependent extent contract; checked byte bodies provide it");
+        } else if (view(o,e->type)) {
+            View *span = view(o,e->type);
+            if (span->family || f->families[i])
+                return fail(o,e->declaration,"owned dynamic inputs need an allocation-extent contract");
+            size_t id = whole_root(o,span->write);
+            f->input_roots[i] = id;
+            v->reference = (Reference){{id,0,1},id,true,false,false,0,0,0};
+        }
         else if (!record_spec(o,e->type) && reference_record(e->type,0)) return fail(o,e->declaration,"value parameter contains undeclared reference fields");
     }
     for (size_t i = 0; i < f->nfields; ++i) {
@@ -2315,9 +2404,11 @@ static bool function_body(Ownership *o, Function *f) {
         StoredField *cell = field_cell(o,f->body,part->field,storage);
         if (part->field->is_static) cell->value.reference = static_reference(part->field->nullable);
         else {
-            unsigned long long size = ce_type_size(o->sema,part->field->type->base);
+            bool whole = view(o,part->field->type) != NULL;
+            unsigned long long size = whole ? 1 : ce_type_size(o->sema,part->field->type->base);
             if (!size) return fail(o,f->body,"record field parameter needs a complete target type");
-            size_t id = root(o,size,part->writing,part->owning ? "heap" : "input",part->owning ? part->field->family : 0);
+            size_t id = whole ? whole_root(o,part->writing) :
+                root(o,size,part->writing,part->owning ? "heap" : "input",part->owning ? part->field->family : 0);
             part->input = id;
             cell->value.reference = (Reference){{id,0,size},id,true,false,part->field->nullable,
                 part->owning ? part->field->family : 0,part->owning ? cell->entity.id : 0,0};
@@ -2353,8 +2444,10 @@ static bool function_body(Ownership *o, Function *f) {
 }
 
 static bool result_description(Ownership *o, Function *f, size_t *input, Range *relative) {
-    CeType *type = f->entity->type->parameters[f->result_from]->base;
+    CeType *parameter = f->entity->type->parameters[f->result_from];
     *input = (size_t)f->result_from;
+    if (view(o,parameter)) { *relative = (Range){0,0,1}; return true; }
+    CeType *type = parameter->base;
     *relative = (Range){0,0,ce_type_size(o->sema,type)};
     if (!f->result_path) return true;
     bool followed_pointer = false;
@@ -2368,7 +2461,7 @@ static bool result_description(Ownership *o, Function *f, size_t *input, Range *
         if (!member) return fail(o,f->body,"result path member not found");
         relative->first += member->offset;
         type = member->type;
-        if (pointer(type)) {
+        if (reference_type(o,type)) {
             if (followed_pointer) return fail(o,f->body,"result paths through multiple pointer fields require a path contract");
             followed_pointer = true;
             bool found = false;
@@ -2377,11 +2470,21 @@ static bool result_description(Ownership *o, Function *f, size_t *input, Range *
                     *input = f->entity->type->nparameters + j; found = true; break;
                 }
             if (!found) return fail(o,f->body,"returned pointer field has no input contract");
-            relative->first = 0; type = type->base;
+            relative->first = 0;
+            if (view(o,type)) {
+                if (i+1 != f->result_path->len) return fail(o,f->body,"whole-view result path must stop at the view");
+                relative->count = 1; return true;
+            }
+            type = type->base;
         }
         relative->count = ce_type_size(o->sema,type);
     }
     return true;
+}
+
+static CeType *contract_input_type(Function *f, size_t input) {
+    return input < f->entity->type->nparameters ? f->entity->type->parameters[input] :
+        f->fields[input-f->entity->type->nparameters].field->type;
 }
 
 static bool write_signature(Ownership *o, FILE *destination, Function *f) {
@@ -2399,6 +2502,7 @@ static bool write_signature(Ownership *o, FILE *destination, Function *f) {
     for (size_t i = 0; i < f->nfields; ++i) {
         FieldPart *part = &f->fields[i];
         if (part->field->is_static) fprintf(destination," (static %s)",part->field->nullable ? "nullable" : "nonnull");
+        else if (view(o,part->field->type)) fprintf(destination," (viewed %s)",part->writing ? "write" : "read");
         else if (part->owning) fprintf(destination," (%s %llu %u)",part->field->nullable ? "optional-owned" : "owned",
             ce_type_size(o->sema,part->field->type->base),part->field->family);
         else fprintf(destination," (%s %llu %s)",part->field->nullable ? "optional-borrowed" : "borrowed",
@@ -2413,7 +2517,9 @@ static bool write_signature(Ownership *o, FILE *destination, Function *f) {
     else if (f->result_from >= 0) {
         size_t input; Range result;
         if (!result_description(o,f,&input,&result)) return false;
-        if (view(o,ft->base)) fprintf(destination,"viewed %zu %llu %llu %s",input,result.first,result.count,
+        if (view(o,ft->base) && view(o,contract_input_type(f,input)))
+            fprintf(destination,"whole-viewed %zu %s",input,reference_read_only(o,ft->base) ? "read" : "write");
+        else if (view(o,ft->base)) fprintf(destination,"viewed %zu %llu %llu %s",input,result.first,result.count,
             reference_read_only(o,ft->base) ? "read" : "write");
         else fprintf(destination,"borrowed %zu %llu %llu %s %s",input,result.first,result.count,
             reference_read_only(o,ft->base) ? "read" : "write",f->result_nullable ? "nullable" : "nonnull");
@@ -2423,6 +2529,7 @@ static bool write_signature(Ownership *o, FILE *destination, Function *f) {
         FieldPost *post = &f->posts[i];
         fprintf(destination," (field %zu (",f->entity->type->nparameters+post->part);
         if (post->source == -2) fprintf(destination,"static %s",post->field->nullable ? "nullable" : "nonnull");
+        else if (view(o,post->field->type)) fprintf(destination,"whole-viewed %d %s",post->source,post->field->write ? "write" : "read");
         else fprintf(destination,"borrowed %d 0 %llu %s %s",post->source,
             ce_type_size(o->sema,post->source < (int)ft->nparameters ? ft->parameters[post->source]->base :
                          f->fields[post->source-ft->nparameters].field->type->base),
@@ -2437,6 +2544,7 @@ static bool write_signature(Ownership *o, FILE *destination, Function *f) {
             fprintf(destination," (field %llu (",post->offset);
             if (post->source == -3) fprintf(destination,"owned %u %s",post->field->family,post->field->nullable ? "nullable" : "nonnull");
             else if (post->source == -2) fprintf(destination,"static %s",post->field->nullable ? "nullable" : "nonnull");
+            else if (view(o,post->field->type)) fprintf(destination,"whole-viewed %d %s",post->source,post->field->write ? "write" : "read");
             else fprintf(destination,"borrowed %d 0 %llu %s %s",post->source,
                 ce_type_size(o->sema,post->source < (int)ft->nparameters ? ft->parameters[post->source]->base :
                              f->fields[post->source-ft->nparameters].field->type->base),
@@ -2616,6 +2724,63 @@ static bool check(Ownership *o, const CeTree *tree) {
         if (capability_family(o,brand)) return malformed(o,spec,"distinct capability types require distinct authority families");
         o->capabilities[o->ncapabilities++] = (Capability){type,brand};
     }
+    o->views = ce_alloc(o->arena,o->declaration->len*sizeof(*o->views));
+    for (size_t i = 1; i < o->declaration->len; ++i) {
+        const CeAtom *spec = o->declaration->items[i];
+        if (!head(spec,"view")) continue;
+        if ((spec->len < 5 || spec->len > 7) || spec->items[1]->kind != CE_ATOM_SYMBOL ||
+            spec->items[2]->kind != CE_ATOM_SYMBOL || spec->items[3]->kind != CE_ATOM_SYMBOL ||
+            (!symbol(spec->items[4],"read") && !symbol(spec->items[4],"write")))
+            return malformed(o,spec,"view requires a type, data field, length field and read/write mode");
+        CeType *type = NULL;
+        for (size_t j = 0; j < o->sema->nentities; ++j) {
+            CeEntity *e = o->sema->entities[j];
+            if (e->kind == CE_ENTITY_TYPEDEF && same(e->name,spec->items[1]->text)) type = e->type;
+        }
+        if (!type || type->kind != CE_T_STRUCT || !type->tag || !type->tag->record ||
+            type->tag->record->nmembers != 2 || type->tag->record->flexible || view(o,type) || record_spec(o,type) || capability(o,type))
+            return malformed(o,spec,"view requires a distinct, complete two-field structure typedef");
+        View *v = &o->views[o->nviews]; *v = (View){.type=type,.write=symbol(spec->items[4],"write"),.stride=1};
+        const CeAtom *element = spec->len >= 6 && spec->items[5]->kind == CE_ATOM_SYMBOL ? spec->items[5] : NULL;
+        size_t owned_index = element ? 6 : 5;
+        if (spec->len > owned_index + 1) return malformed(o,spec,"view has too many clauses");
+        if (spec->len > owned_index) {
+            const CeAtom *owned = spec->items[owned_index];
+            if (!v->write || !head(owned,"owns") || owned->len != 2 || owned->items[1]->kind != CE_ATOM_SYMBOL)
+                return malformed(o,spec,"owning view requires write mode and an allocation family");
+            v->family = family(o,owned->items[1]->text);
+        }
+        for (size_t j = 0; j < 2; ++j) {
+            CeMember *m = &type->tag->record->members[j];
+            if (m->bitfield || m->anonymous) return malformed(o,spec,"view fields must be ordinary named fields");
+            if (m->type->qualifiers & (CE_Q_VOLATILE | CE_Q_ATOMIC))
+                return malformed(o,spec,"volatile and atomic view metadata require a native resource contract");
+            if (same(m->name,spec->items[2]->text)) v->data = m;
+            if (same(m->name,spec->items[3]->text)) v->length = m;
+        }
+        if (!v->data || !v->length || v->data == v->length || !pointer(v->data->type) ||
+            v->write == read_only(v->data->type) || !ce_type_integer(v->length->type) ||
+            ce_kind_signed(o->sema->abi,ce_type_integer_kind(v->length->type)) ||
+            ce_type_size(o->sema,v->length->type) != o->sema->abi->size[o->sema->abi->size_type])
+            return malformed(o,spec,"view needs a scalar pointer of the declared mode and an unsigned size field");
+        CeType *pointee = v->data->type->base;
+        if (element) {
+            if (symbol(element,"usize")) v->stride = o->sema->abi->size[o->sema->abi->size_type];
+            else if (symbol(element,"bool") || symbol(element,"u8")) v->stride = 1;
+            else if (symbol(element,"u16")) v->stride = 2;
+            else if (symbol(element,"u32")) v->stride = 4;
+            else if (symbol(element,"u64")) v->stride = 8;
+            else return malformed(o,element,"view element must be bool, u8, u16, u32, u64 or usize");
+            if (!ce_type_integer(pointee) || pointee->kind == CE_T_ENUM ||
+                ce_kind_signed(o->sema->abi,ce_type_integer_kind(pointee)) ||
+                (symbol(element,"bool") != (pointee->kind == CE_T_BOOL)) ||
+                (symbol(element,"usize") && pointee->kind != o->sema->abi->size_type))
+                return malformed(o,element,"view element disagrees with its C pointer type");
+        }
+        if (ce_type_size(o->sema,pointee) != v->stride)
+            return malformed(o,spec,"view element width disagrees with its C pointer type");
+        ++o->nviews;
+    }
     o->records = ce_alloc(o->arena,o->declaration->len*sizeof(*o->records));
     for (size_t i = 1; i < o->declaration->len; ++i) {
         const CeAtom *spec = o->declaration->items[i];
@@ -2628,10 +2793,11 @@ static bool check(Ownership *o, const CeTree *tree) {
             if (e->kind == CE_ENTITY_TYPEDEF && e->scope == CE_SCOPE_FILE && same(e->name,spec->items[1]->text)) type = e->type;
         }
         if (!type || type->kind != CE_T_STRUCT || !type->tag || !type->tag->record ||
-            !type->tag->record->complete || type->tag->record->flexible || record_spec(o,type) || capability(o,type))
+            !type->tag->record->complete || type->tag->record->flexible || record_spec(o,type) || view(o,type) || capability(o,type))
             return malformed(o,spec,"record requires a distinct complete structure typedef");
         RecordSpec *r = &o->records[o->nrecords++];
-        *r = (RecordSpec){.type=type,.len=spec->len-2,.fields=ce_alloc(o->arena,(spec->len-2)*sizeof(FieldSpec))};
+        *r = (RecordSpec){.type=type,.len=spec->len-2,
+            .fields=ce_alloc(o->arena,(spec->len-2+type->tag->record->nmembers)*sizeof(FieldSpec))};
         for (size_t j = 0; j < r->len; ++j) {
             const CeAtom *part = spec->items[j+2];
             if (!head(part,"field") || part->len != 3 || part->items[1]->kind != CE_ATOM_SYMBOL)
@@ -2664,62 +2830,12 @@ static bool check(Ownership *o, const CeTree *tree) {
             CeMember *m = &type->tag->record->members[k];
             if (pointer(m->type) && !field_spec(o,type,m->name))
                 return malformed(o,spec,"every pointer field requires a lifetime contract");
+            View *v = view(o,m->type);
+            if (v) {
+                if (v->family) return malformed(o,spec,"owning nested views need an allocation-result contract");
+                r->fields[r->len++] = (FieldSpec){.name=m->name,.type=m->type,.write=v->write};
+            }
         }
-    }
-    o->views = ce_alloc(o->arena,o->declaration->len*sizeof(*o->views));
-    for (size_t i = 1; i < o->declaration->len; ++i) {
-        const CeAtom *spec = o->declaration->items[i];
-        if (!head(spec,"view")) continue;
-        if ((spec->len < 5 || spec->len > 7) || spec->items[1]->kind != CE_ATOM_SYMBOL ||
-            spec->items[2]->kind != CE_ATOM_SYMBOL || spec->items[3]->kind != CE_ATOM_SYMBOL ||
-            (!symbol(spec->items[4],"read") && !symbol(spec->items[4],"write")))
-            return malformed(o,spec,"view requires a type, data field, length field and read/write mode");
-        CeType *type = NULL;
-        for (size_t j = 0; j < o->sema->nentities; ++j) {
-            CeEntity *e = o->sema->entities[j];
-            if (e->kind == CE_ENTITY_TYPEDEF && same(e->name,spec->items[1]->text)) type = e->type;
-        }
-        if (!type || type->kind != CE_T_STRUCT || !type->tag || !type->tag->record ||
-            type->tag->record->nmembers != 2 || type->tag->record->flexible || view(o,type) || record_spec(o,type) || capability(o,type))
-            return malformed(o,spec,"view requires a distinct, complete two-field structure typedef");
-        View *v = &o->views[o->nviews]; *v = (View){.type=type,.write=symbol(spec->items[4],"write"),.stride=1};
-        const CeAtom *element = spec->len >= 6 && spec->items[5]->kind == CE_ATOM_SYMBOL ? spec->items[5] : NULL;
-        size_t owned_index = element ? 6 : 5;
-        if (spec->len > owned_index + 1) return malformed(o,spec,"view has too many clauses");
-        if (spec->len > owned_index) {
-            const CeAtom *owned = spec->items[owned_index];
-            if (!v->write || !head(owned,"owns") || owned->len != 2 || owned->items[1]->kind != CE_ATOM_SYMBOL)
-                return malformed(o,spec,"owning view requires write mode and an allocation family");
-            v->family = family(o,owned->items[1]->text);
-        }
-        for (size_t j = 0; j < 2; ++j) {
-            CeMember *m = &type->tag->record->members[j];
-            if (m->bitfield || m->anonymous) return malformed(o,spec,"view fields must be ordinary named fields");
-            if (same(m->name,spec->items[2]->text)) v->data = m;
-            if (same(m->name,spec->items[3]->text)) v->length = m;
-        }
-        if (!v->data || !v->length || v->data == v->length || !pointer(v->data->type) ||
-            v->write == read_only(v->data->type) || !ce_type_integer(v->length->type) ||
-            ce_kind_signed(o->sema->abi,ce_type_integer_kind(v->length->type)) ||
-            ce_type_size(o->sema,v->length->type) != o->sema->abi->size[o->sema->abi->size_type])
-            return malformed(o,spec,"view needs a scalar pointer of the declared mode and an unsigned size field");
-        CeType *pointee = v->data->type->base;
-        if (element) {
-            if (symbol(element,"usize")) v->stride = o->sema->abi->size[o->sema->abi->size_type];
-            else if (symbol(element,"bool") || symbol(element,"u8")) v->stride = 1;
-            else if (symbol(element,"u16")) v->stride = 2;
-            else if (symbol(element,"u32")) v->stride = 4;
-            else if (symbol(element,"u64")) v->stride = 8;
-            else return malformed(o,element,"view element must be bool, u8, u16, u32, u64 or usize");
-            if (!ce_type_integer(pointee) || pointee->kind == CE_T_ENUM ||
-                ce_kind_signed(o->sema->abi,ce_type_integer_kind(pointee)) ||
-                (symbol(element,"bool") != (pointee->kind == CE_T_BOOL)) ||
-                (symbol(element,"usize") && pointee->kind != o->sema->abi->size_type))
-                return malformed(o,element,"view element disagrees with its C pointer type");
-        }
-        if (ce_type_size(o->sema,pointee) != v->stride)
-            return malformed(o,spec,"view element width disagrees with its C pointer type");
-        ++o->nviews;
     }
     for (size_t i = 0; i < o->sema->nentities; ++i) {
         CeEntity *e = o->sema->entities[i]; if (e->kind != CE_ENTITY_FUNCTION) continue;
@@ -2871,7 +2987,15 @@ static bool check(Ownership *o, const CeTree *tree) {
         }
     }
     if (!global_effects(o)) return false;
-    if (o->plan) fputs("(Ownership \"cesta-ownership/3\"\n",o->plan);
+    bool whole_units = false;
+    for (size_t i = 0; i < o->nfunctions; ++i) {
+        Function *f = &o->functions[i];
+        for (size_t j = 0; j < f->entity->type->nparameters; ++j)
+            whole_units |= view(o,f->entity->type->parameters[j]) && (f->checked || f->result_from == (int)j);
+        for (size_t j = 0; j < f->nfields; ++j) whole_units |= view(o,f->fields[j].field->type) != NULL;
+        for (size_t j = 0; j < f->nresults; ++j) whole_units |= view(o,f->results[j].field->type) != NULL;
+    }
+    if (o->plan) fprintf(o->plan,"(Ownership \"cesta-ownership/%u\"\n",whole_units ? 4u : 3u);
     if (!abi_record(o)) return false;
     if (o->plan) for (size_t i = 0; i < o->nfunctions; ++i) if (o->functions[i].foreign) {
         Function *f = &o->functions[i];

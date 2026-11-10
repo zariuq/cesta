@@ -102,6 +102,8 @@ view checks that its length fits a precise source extent. A known array
 length, a constant allocation extent, or another checked view's length can
 supply that extent. Pointer and length must be replaced together; independent
 field updates and escaping their addresses are refused.
+Volatile or atomic descriptor fields require a separate native resource
+contract and cannot be declared as ordinary views.
 
 Read views can share their data. Copying an exclusive view creates a reborrow
 that suspends the source's overlapping access until the copy's scope ends.
@@ -123,9 +125,43 @@ arguments lend the actual footprint, with read or write permission, while
 the byte implementation retains its explicit runtime bounds checks. The
 ByteViews example joins native record checking with checked-c/1 byte code.
 
-Native functions with dynamically sized view parameters and owning buffer
-results still need further dependent extent contracts. They are refused by
-this profile. Ordinary reference fields use the contracts below.
+Native functions can accept non-owning dynamic views and return the complete
+view with (returns-borrow INPUT). The extent stays attached to the pointer.
+Native code can inspect the descriptor and pass it to a contracted view
+operation; indexing or dereferencing its dynamic data pointer directly is
+refused, even at index zero. Use checked-c/1 accessors for those operations.
+Passing that pointer to a fixed-pointee or variadic interface is also refused:
+the view may be empty. Reconstructing a dynamic view from data and len requires
+the same origin and element width; a constant length cannot shorten it.
+
+Declared views nested in a (record ...) are atomic reference fields. They
+inherit their view's read/write mode and require explicit initialization.
+Their record result contracts name the whole view field:
+
+  (view ReadWords data len read u32)
+  (record Payload)
+  (record Event)
+  (function capture (returns-record ((firing words) (borrow 0))))
+  (function store (stores-record 1 ((firing words) (borrow 0))))
+
+Here Payload contains a ReadWords field named words, Event contains a Payload
+field named firing, and input 0 is a ReadWords value. Nested record/array paths
+retain the referent, not the temporary descriptor's storage. Both returned and
+stored views must retain the complete declared input extent. Updating a view's
+data or length independently, returning stack storage, and retaining a local
+buffer after its scope ends are refused. A record pointer origin can name its
+view field, for example (borrow 0 firing words).
+
+cesta-ownership/4 makes the units explicit: whole-root and whole-view events
+represent one complete dynamic input, and whole-viewed result shapes preserve
+it. This unit is not a one-byte allocation. Lean interprets it at any caller
+byte extent, including zero, while ordinary object roots retain byte units.
+Admission rejects using a whole input in a fixed-size call or narrowing its
+symbolic footprint. Earlier concrete-byte plans retain their interpretation.
+
+Owned dynamic inputs, owning buffer results and owning nested views still
+require allocation-extent contracts and remain refused by this profile.
+Ordinary reference fields use the contracts below.
 
 REFERENCE FIELDS
 

@@ -50,6 +50,14 @@ def boolean(value):
 
 def action(event):
     name = str(event[0])
+    if name == "whole-root":
+        assert len(event) == 3
+        # A logical whole-span unit, interpreted by OwnershipViewExtents at
+        # every caller byte extent. This is not an allocation of one byte.
+        return f"(.root {natural(event[1])} 1 {mode(event[2])} .input 0)"
+    if name == "whole-view":
+        assert len(event) == 4
+        return f"(.view {natural(event[1])} ⟨{natural(event[2])}, 0, 1⟩ 1 {boolean(event[3])})"
     if name == "root":
         assert len(event) == 6 and event[4] in ("local","input","heap","static")
         return f"(.root {natural(event[1])} {natural(event[2])} {mode(event[3])} .{event[4]} {natural(event[5])})"
@@ -178,7 +186,10 @@ def signature(declaration):
             ps.append("(.released "+natural(p[1])+")")
     assert len(variadic) == 2 and variadic[1] in ("read", "none")
     assert result[0] == "result"
-    if result[1] == "viewed":
+    if result[1] == "whole-viewed":
+        assert len(result) == 4
+        returns = "(.wholeViewed "+natural(result[2])+" "+boolean(result[3])+")"
+    elif result[1] == "viewed":
         assert len(result) == 6
         returns = "(.viewed "+" ".join(natural(n) for n in result[2:5])+" "+boolean(result[5])+")"
     elif result[1] == "borrowed":
@@ -198,6 +209,9 @@ def signature(declaration):
             elif shape[0] == "owned":
                 assert expected == "records" and len(shape) == 3
                 code = "(.owned "+natural(shape[1])+" "+boolean(shape[2])+")"
+            elif shape[0] == "whole-viewed":
+                assert len(shape) == 3
+                code = "(.wholeViewed "+natural(shape[1])+" "+boolean(shape[2])+")"
             else:
                 assert shape[0] == "borrowed" and len(shape) == 6
                 code = "(.borrowed "+" ".join(natural(n) for n in shape[1:4])+" "+boolean(shape[4])+" "+boolean(shape[5])+")"
@@ -214,12 +228,20 @@ def function(declaration):
 
 
 def module_parts(record):
-    assert record[0] == "Ownership" and isinstance(record[1],Text) and record[1].data in (b"cesta-ownership/2", b"cesta-ownership/3")
+    assert record[0] == "Ownership" and isinstance(record[1],Text) and record[1].data in (
+        b"cesta-ownership/2", b"cesta-ownership/3", b"cesta-ownership/4")
+    if record[1].data != b"cesta-ownership/4":
+        def old_syntax(item):
+            if isinstance(item, list):
+                assert not item or item[0] not in ("whole-root", "whole-view", "whole-viewed")
+                for child in item:
+                    old_syntax(child)
+        old_syntax(record)
     foreign, functions = [], []
     abi = False
     for item in record[2:]:
         if item[0] == "abi":
-            assert not abi and record[1].data == b"cesta-ownership/3"
+            assert not abi and record[1].data in (b"cesta-ownership/3", b"cesta-ownership/4")
             assert len(item) == 4 and isinstance(item[1],Text) and item[1].data == b"cesta-abi/1"
             assert len(item[2]) == 2 and item[2][0] == 'sha256' and isinstance(item[2][1],Text)
             digest = item[2][1].data
@@ -233,6 +255,17 @@ def module_parts(record):
             foreign.append((str(item[1]),signature(item[2]),item[3][1].data.decode()))
         else:
             function(item)  # refuse unknown syntax before producing a proof file
+            parameters, inputs = item[2][1][1:], item[3][1:]
+            whole = {str(root) for parameter, root in zip(parameters, inputs) if parameter[0] == 'viewed'}
+            if whole:
+                assert record[1].data == b'cesta-ownership/4', 'whole-view bodies need explicit extent units'
+            for event in walk(item[6][1:]):
+                if event[0] == 'whole-root':
+                    assert str(event[1]) in whole, 'whole root must name a declared viewed input'
+                elif event[0] == 'root':
+                    assert str(event[1]) not in whole, 'viewed input cannot acquire a concrete byte root'
+                elif event[0] == 'whole-view':
+                    assert str(event[2]) in whole, 'whole view must preserve its abstract input root'
             functions.append(item)
     assert functions
     return foreign, functions
@@ -325,7 +358,7 @@ def admit_record(record, path, lean_root, controls=True, cache=True, assemble=Tr
         context.update(name.encode());context.update(artifact.read_bytes())
     context_key=context.hexdigest()
     cached=0
-    imports = ["import Mettapedia.GSLT.LanguageDef.OwnershipAdmission"]
+    imports = ["import Mettapedia.GSLT.LanguageDef.OwnershipViewExtents"]
     setup = ["open Mettapedia.GSLT.LanguageDef.Ownership", "set_option maxRecDepth 200000",
         "set_option maxHeartbeats 0", "namespace "+prefix]
     def compile_file(source, text, export=True):
@@ -364,6 +397,12 @@ def admit_record(record, path, lean_root, controls=True, cache=True, assemble=Tr
         declarations = ["import "+prefix+".Names"]+setup
         declarations.append(f"def fn{index} : Function := "+function(item))
         declarations.append(f"theorem accepts{index} : admitFunction callables fn{index} = true := by decide +kernel")
+        if record[1].data == b"cesta-ownership/4":
+            declarations.append(f"theorem extent_prefix{index} (bytes : Nat → Nat) (reached : State) "
+                f"(path : Mettapedia.Machines.CMemory.PermissionFlow.Prefix "
+                f"(enabled callables fn{index}) fn{index}.body initial reached) : "
+                f"Valid (scaleState (viewWeight fn{index} bytes) reached) := "
+                f"prefix_valid_scale (viewWeight fn{index} bytes) path")
         checks += 1
         if controls:
             for mutant in mutations(item):

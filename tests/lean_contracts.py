@@ -102,6 +102,8 @@ OWNERSHIP_MODULES = [
     "Mettapedia.GSLT.LanguageDef.OwnershipCalls",
     "Mettapedia.GSLT.LanguageDef.OwnershipViews",
     "Mettapedia.GSLT.LanguageDef.OwnershipAdmission",
+    "Mettapedia.Machines.CMemory.RegionScaling",
+    "Mettapedia.GSLT.LanguageDef.OwnershipViewExtents",
 ]
 LAYOUT_BRIDGE_MODULES = [
     "Mettapedia.Languages.MeTTa.Bridges.GSLT.CeTTaFrameLayout",
