@@ -2,6 +2,7 @@
 #define CESTA_H
 
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -14,6 +15,9 @@ typedef struct { char message[512]; size_t offset; } CeError;
 void *ce_alloc(CeArena *arena, size_t bytes);
 void ce_arena_free(CeArena *arena);
 void *ce_resize(void *old, size_t count, size_t size);
+/* Arena-owned text; formatting and allocation failures terminate the tool. */
+char *ce_vformat(CeArena *arena, const char *format, va_list arguments);
+char *ce_format(CeArena *arena, const char *format, ...);
 CeText ce_text(CeArena *arena, const void *bytes, size_t len);
 CeText ce_cstr(CeArena *arena, const char *str);
 bool ce_equal(CeText left, CeText right);

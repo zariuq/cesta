@@ -258,8 +258,7 @@ static uint64_t text_hash(uint64_t hash, CeText text) {
 /* Publish a complete immutable input before starting a compiler. Separate
    generations cannot overwrite one another during parallel builds. */
 static bool publish_text(CeArena *arena, const char *path, CeText text, CeError *error) {
-    char *temporary = ce_alloc(arena,strlen(path)+16);
-    sprintf(temporary,"%s.XXXXXX",path);
+    char *temporary = ce_format(arena,"%s.XXXXXX",path);
     int fd = mkstemp(temporary);
     if (fd < 0) return ce_error(error,0,"cannot create generated C input: %s",strerror(errno));
     FILE *file = fdopen(fd,"wb");
@@ -290,8 +289,7 @@ static bool contracts_write(CeArena *arena, const char *path, const CeNativeOutp
         used += outputs[i].contracts.len;
     }
     memcpy(text+used,tail,sizeof tail-1); used += sizeof tail-1;
-    char *temporary = ce_alloc(arena,strlen(path)+16);
-    sprintf(temporary,"%s.XXXXXX",path);
+    char *temporary = ce_format(arena,"%s.XXXXXX",path);
     int fd = mkstemp(temporary);
     if (fd < 0) return ce_error(error,0,"cannot create %s: %s",path,strerror(errno));
     FILE *file = fdopen(fd,"wb");
@@ -492,8 +490,7 @@ static int separate_compile(CeArena *arena, size_t n, char **args, const unsigne
         }
         char *dependency_file = NULL;
         if (dependency_stdout) {
-            dependency_file = ce_alloc(arena,strlen(cache)+24);
-            sprintf(dependency_file,"%s/deps-XXXXXX",cache);
+            dependency_file = ce_format(arena,"%s/deps-XXXXXX",cache);
             int fd = mkstemp(dependency_file);
             if (fd < 0) { ce_error(error,0,"cannot create native dependency output"); failures = -1; break; }
             close(fd); cc[k++] = "-MF"; cc[k++] = dependency_file;
@@ -506,8 +503,7 @@ static int separate_compile(CeArena *arena, size_t n, char **args, const unsigne
                 char *path = ce_alloc(arena,strlen(stem)+3);
                 sprintf(path,"%s%s",stem,assembly ? ".s" : ".o"); object = path;
             } else {
-                char *path = ce_alloc(arena,strlen(cache)+24);
-                sprintf(path,"%s/object-XXXXXX",cache);
+                char *path = ce_format(arena,"%s/object-XXXXXX",cache);
                 int fd = mkstemp(path);
                 if (fd < 0) { ce_error(error,0,"cannot create an intermediate object"); failures = -1; break; }
                 close(fd); object = path; temporary[at] = 1;
@@ -637,8 +633,7 @@ static int native_authoring_compile(CeArena *arena, size_t n, char **args,
                 pp[k++] = "-MT"; pp[k++] = (char *)(compile && output && sources == 1 ? output : target);
             }
             if (dependency_stdout) {
-                char *temporary = ce_alloc(arena,strlen(generated_base)+24);
-                sprintf(temporary,"%s.deps.XXXXXX",generated_base);
+                char *temporary = ce_format(arena,"%s.deps.XXXXXX",generated_base);
                 int fd = mkstemp(temporary);
                 if (fd < 0) return ce_error(error,0,"cannot create native dependency output"), 1;
                 close(fd); actual_depfile = temporary;
@@ -811,8 +806,7 @@ static int source_document_compile(CeArena *arena, size_t n, char **arguments,
         if (!directories(parent,error)) { ++count; goto done; }
         char *path = ce_alloc(arena,capacity);
         snprintf(path,capacity,"%s/%s.i",parent,stem);
-        char *temporary = ce_alloc(arena,strlen(path)+12);
-        sprintf(temporary,"%s.XXXXXX",path);
+        char *temporary = ce_format(arena,"%s.XXXXXX",path);
         int descriptor = mkstemp(temporary);
         FILE *file = descriptor < 0 ? NULL : fdopen(descriptor,"wb");
         if (!file && descriptor >= 0) close(descriptor);

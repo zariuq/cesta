@@ -1,5 +1,6 @@
 """Qualify native compiler flags and source identity at the build boundary."""
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -18,6 +19,10 @@ def run(arguments, expected=0):
 
 
 def main():
+    global BINARY
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--cesta', type=Path, default=BINARY)
+    BINARY = parser.parse_args().cesta.resolve()
     output = ROOT / "build/driver"
     output.mkdir(parents=True, exist_ok=True)
     native = output / "native"

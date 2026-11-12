@@ -113,12 +113,10 @@ static bool bad(Checked *m, const CeAtom *a, const char *format, ...) {
 }
 
 static char *print_string(Checked *m, const char *format, ...) {
-    va_list args, copy;
-    va_start(args,format); va_copy(copy,args);
-    int length = vsnprintf(NULL,0,format,copy); va_end(copy);
-    if (length < 0) { va_end(args); return NULL; }
-    char *result = ce_alloc(m->arena,(size_t)length+1);
-    vsnprintf(result,(size_t)length+1,format,args); va_end(args);
+    va_list args;
+    va_start(args,format);
+    char *result = ce_vformat(m->arena,format,args);
+    va_end(args);
     return result;
 }
 

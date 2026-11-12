@@ -23,7 +23,7 @@ def run(arguments):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--sanitizers-only', action='store_true',
-                        help='build and exercise a Clang ASan/UBSan compiler')
+                        help='build and exercise GCC and Clang ASan/UBSan compilers')
     args = parser.parse_args()
     work = ROOT / "build/compiler-builds"
     work.mkdir(parents=True, exist_ok=True)
@@ -51,8 +51,10 @@ def main():
       const unsigned *current(const unsigned *p) {return p;}
       unsigned apply(Reader r) {return *r.read(r.context);}
       unsigned f(void) {const unsigned n=7;Reader r={&n,current};return apply(r);}")))''')
+    invalid_callback = work / "invalid-callback.cesta"
+    invalid_callback.write_text(callback.read_text().replace('return p;', 'return 0;'))
     results, contracts, control_plans, control_exports, callback_plans = {}, {}, {}, {}, {}
-    for compiler in (("clang",) if args.sanitizers_only else ("gcc", "clang")):
+    for compiler in ("gcc", "clang"):
         for level in (("1",) if args.sanitizers_only else ("0", "2")):
             instrument = ' -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' if args.sanitizers_only else ''
             commands = run(["make", "-s", "-n", "-B", "build/cesta",
@@ -96,6 +98,11 @@ def main():
                  "-fsyntax-only", str(callback)])
             if b'link-contracts/1' not in record.read_bytes() or b'(open)' not in record.read_bytes():
                 raise RuntimeError("compiler did not publish its actual callback link record")
+            refused = subprocess.run([str(binary), 'export-c', str(invalid_callback),
+                                      '--cc', compiler, '--std=c11'], cwd=ROOT, capture_output=True)
+            if refused.returncode != 1 or b'ownership' not in refused.stderr:
+                raise RuntimeError("compiler did not refuse a callback that breaks its result contract\n" +
+                                   refused.stderr.decode(errors='replace'))
             print(compiler, "-O" + level, "production build and typed provenance pass", flush=True)
     for compiler in ("gcc", "clang"):
         if (compiler, "0") in results and results[compiler, "0"] != results[compiler, "2"]:
@@ -109,7 +116,8 @@ def main():
     if len(set(callback_plans.values())) != 1:
         raise RuntimeError("host compiler/optimization changed field-derived callback admission")
     if args.sanitizers_only:
-        print("instrumented compiler: span, post-test control, callback plans and link publication pass", flush=True)
+        print("GCC/Clang instrumented compilers: span, post-test control, callback plans, "
+              "link publication and invalid-implementation refusal pass", flush=True)
     else:
         print("span contract identical across the four production-tool builds", flush=True)
         print("field-derived callback plan identical across the four production-tool builds", flush=True)

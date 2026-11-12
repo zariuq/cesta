@@ -12,6 +12,10 @@ SOURCES = $(LIBSOURCES) src/main.c
 .PHONY: all test test-reference test-c test-examples test-driver test-literal-bytes
 all: build/cesta
 
+.PHONY: test-formatting
+test-formatting:
+	python3 -B tests/formatting.py
+
 # Independent artifact qualification; no HOL dependency in ordinary tiers.
 .PHONY: qualify-hol-copy
 qualify-hol-copy: build/cesta
@@ -533,7 +537,7 @@ test-tiers:
 # native compilers; qualify runs every gate, including corpora, compiler
 # matrices and actual-data Lean admissions. test_tiers.py keeps every
 # previously required gate inside qualify.
-CHECK_GATES := test-tiers test-foundation test-source-core test-pp-core test-qualification-controls test-ownership-smoke \
+CHECK_GATES := test-tiers test-foundation test-formatting test-source-core test-pp-core test-qualification-controls test-ownership-smoke \
 	test-reference test-wire test-literal-bytes test-coverage test-presentations test-presentation-coverage \
 	test-unicode-names test-source-driver test-driver test-macro-prescan test-macro-definition-ports \
 	test-macro-export test-macro-program-export test-export-counters test-layouts test-layout-edges test-tables test-protocols test-protocol-loops \

@@ -37,6 +37,32 @@ void *ce_resize(void *old, size_t count, size_t size) {
     return result;
 }
 
+char *ce_vformat(CeArena *arena, const char *format, va_list arguments) {
+    if (!format) { fputs("cesta: null format string\n",stderr); exit(2); }
+    va_list copy;
+    va_copy(copy,arguments);
+    int length = vsnprintf(NULL,0,format,copy);
+    va_end(copy);
+    if (length < 0 || (uintmax_t)length >= SIZE_MAX) {
+        fputs("cesta: cannot format text\n",stderr); exit(2);
+    }
+    size_t capacity = (size_t)length+1;
+    char *text = ce_alloc(arena,capacity);
+    va_copy(copy,arguments);
+    int written = vsnprintf(text,capacity,format,copy);
+    va_end(copy);
+    if (written != length) { fputs("cesta: cannot format text\n",stderr); exit(2); }
+    return text;
+}
+
+char *ce_format(CeArena *arena, const char *format, ...) {
+    va_list arguments;
+    va_start(arguments,format);
+    char *text = ce_vformat(arena,format,arguments);
+    va_end(arguments);
+    return text;
+}
+
 CeText ce_text(CeArena *arena, const void *bytes, size_t len) {
     CeText text = {ce_alloc(arena, len + 1), len};
     if (len) memcpy(text.data, bytes, len);
