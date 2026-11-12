@@ -318,6 +318,79 @@ live. At a call, the destination is an initialized local pointer slot.
 Native mutable pointer-to-pointer arguments need either stores or preserves;
 the checker never assumes that an arbitrary native write preserves a borrow.
 
+CALLBACKS
+
+  (callback Read (targets first second))
+  (function apply (calls 0 Read))
+  (record Cursor (field ctx (borrow read)) (field next (callback Read)))
+
+A closed callback contract names a typedef of a nonvariadic function-pointer
+prototype and the complete, nonempty set of functions that may flow into it.
+Each target has a checked body, or an explicit foreign contract, with exactly
+that prototype. All targets share one ownership contract, so a call through
+the pointer is checked once against it. Targets receive their state through
+explicit arguments: a function whose effects reach an owned global is refused
+as a target.
+
+A function name, with or without &, denotes that one function. A local
+function pointer keeps the exact function it was assigned, and a call through
+it is checked as a call to that function. A local pointer that hides a
+function of the same name follows the pointer, not the name.
+
+A function-pointer parameter needs (calls INDEX Name). A record field needs
+the (callback Name) mode, or (callback Name nullable). A value may enter
+either one when it is a listed target, or when it already carries a contract
+whose targets are all listed. A nullable field may hold null; every other
+position refuses it.
+
+An invocation requires a callable known to be non-null, by its contract or by
+a guard, and of the declared function type. A cast to another function type
+is refused. The callable's storage is borrowed while the arguments are
+evaluated, so an argument cannot replace the function being called.
+
+Context lifetimes use the ordinary contracts. A borrowed context field keeps
+its referent alive, a returned record names the input lifetime of each field,
+and a result borrowed from the context blocks writes to it while live.
+A callback that takes ownership of its argument consumes it at the call.
+
+An open callback contract instead names an authoritative C record member:
+
+  (callback ReadNext (field Cursor next) (returns-borrow 0 nullable))
+  (record Cursor
+    (field ctx (borrow read))
+    (field next (callback ReadNext)))
+
+The member must be a nonvariadic function pointer in a complete record. Its
+actual C declaration supplies the prototype; the remaining clauses use the
+ordinary foreign-function contract vocabulary. No function-pointer typedef or
+duplicate C layout is required. Installing an implementation requires a checked
+body or an explicit foreign contract, that exact prototype and a compatible
+resource signature. A nonnull result may satisfy a nullable result; arguments,
+origins, extents, access rights, allocation families and record postconditions
+remain exact. An unchecked body is not a checked callback implementation.
+
+An open interface cannot flow into a closed whitelist merely because its
+prototype agrees. Entry-supplied callbacks remain named native obligations;
+their C types do not establish arbitrary context invariants or imply that all
+possible providers were checked. Context borrowing and result lifetimes still
+use the ordinary rules above. Calls through a closed interface record every
+possible target at the link boundary.
+Link records also distinguish open interfaces from closed whitelists. Closed
+targets are sorted by name, with translation-unit identity for internal-linkage
+implementations. Reordering a whitelist preserves its contract; replacing it,
+or substituting another unit's equally named static function, does not. A
+closed interface containing internal targets cannot cross a unit boundary;
+use an open contract for a shared implementation-independent interface. Rebuild
+the link records when upgrading the checker so this evidence is present; older
+callback records without provenance are refused. Associated callback contracts
+travel with returned records and record pointers as well as parameters.
+
+Closed callback plans use cesta-ownership/5 (or /6 for post-test control).
+Plans with open interfaces use cesta-ownership/7, recording the interface's
+foreign callable and actual implementation bindings. Older plans remain
+admissible. The optional Lean checks admit those signatures and bindings in
+the existing permission model; they do not interpret general C execution.
+
 ALLOCATION, MOVE AND RELEASE
 
   (allocator heap malloc free
@@ -376,6 +449,141 @@ a misspelt name leaves its body checked, and calls to a function that is only
 declared still need a foreign contract. A parenthesized list of names shares
 one contract and obligation. Declaring a
 defined function foreign is refused: an unchecked body is always named.
+
+CONTRACTS BESIDE A HEADER
+
+  reader.h             the C declarations
+  reader.h.ownership   (cesta ownership-interface/1
+                         (record Reader (field bytes (borrow read)))
+                         (function reader_peek (returns-borrow 0 bytes nullable))
+                         (function reader_step)
+                         (unchecked fence (obligation "...")))
+
+A file named after a header, with .ownership appended, holds the contracts of
+what that header declares. Every checked unit that reads the header, directly
+or through another header, is checked with those contracts as if it had
+written them. Such a unit needs no contract of its own for them:
+(ownership (check-all)) is enough.
+
+One text serves both sides of a call. In the unit that defines a function, a
+(function NAME ...) contract governs the checked body. In a unit that only
+declares it, the same contract governs each call; the plan records the call as
+foreign, under the obligation that the definition meets the contract stated in
+that file. (unchecked NAME ... (obligation "...")) names a native body once,
+wherever the body appears: a static inline helper defined in the header stays
+out of the check in every unit that includes it, and a unit that only declares
+the name calls it under the same contract and obligation. (foreign NAME ...)
+is a function with no checked body anywhere; a unit that defines it is refused.
+
+record, view, callback, capability and allocator contracts apply in each unit
+that declares their types and functions. An item whose type or function is
+absent from a unit's preprocessing configuration has no effect there, and the
+field contracts of a record that a unit sees only as an incomplete type have
+nothing to govern in that unit. check-all, abi-fingerprint and global belong
+to a unit and are refused in an interface.
+
+A function has one contract. A unit item that states the same contract as an
+interface item, with its name alone or in a group of names, is that same
+contract. A different contract for the same function is refused, and so are
+two interfaces that disagree. An error in an interface is reported with the
+interface file's name and line; an error in a unit's own contract is reported
+at that item.
+
+  cesta export-interface [--cc COMPILER] [-o HEADER.ownership] HEADER UNIT.cesta [-- NATIVE-FLAGS]
+
+writes the contracts a unit gives what HEADER declares, after checking the
+unit: the record, view, capability and callback contracts of the header's
+typedefs, an allocator whose functions it declares, and the contract of each
+function it declares that the unit defines, checked or unchecked, or states
+as foreign. A checked body with no contract of its own is written
+(function NAME); a group of unchecked names is written name by name, each
+with the group's obligation. The unit may keep its own items, which state the
+same contracts, and writing the interface again gives the same text. An
+obligation shared by a group often describes the unit rather than one
+function; it is worth rewriting for each function in the interface.
+
+A unit depends on each interface file it read: dependency output lists them,
+the ABI fingerprint covers their contents, and cesta build checks the unit
+again when one changes, or first appears beside a header the unit reads,
+whatever its timestamp: the dependency record names the interfaces the last
+check read. A make rule driven only by dependency files sees a changed
+interface, and sees a new one when the unit is next rebuilt.
+
+Whether a program links a definition checked under the same contract its
+callers assumed is decided when the program is linked; see COMPOSITION AT
+LINK TIME.
+
+COMPOSITION AT LINK TIME
+
+  cesta cc --contracts unit.o.contracts FLAGS -c unit.cesta -o unit.o
+  cesta link-check [--obligations FILE] [--program NAME] RECORD...
+
+A unit checked for ownership writes a link record. It names the functions
+the unit defines, with their linkage and whether each body was checked or
+left unchecked, and the functions the unit only declares but its checked
+bodies call or name. Each carries its contract in a form that does not
+depend on the unit: the signature the plan records, with allocator and
+capability families and callbacks by name; the C function type, written
+structurally, with an enumeration as its compatible integer type; the shared
+contract of the targets of each callback it passes; and the layout of every
+complete record its types reach. Effects on the unit's own private globals
+stay with that unit; no other unit can reach them.
+
+The link check reads the records of the units that make up one program.
+Every call a checked body makes into another unit is matched with the
+definition the program links:
+
+- the definition was checked under a compatible contract: the call composes,
+  and its foreign obligation is met by a checked body;
+- the definition was checked under another contract, C type, callback
+  contract or record layout: an error at the call, naming the definition and
+  the first part that differs. A record that one unit saw only as an
+  incomplete type has no layout to compare there;
+- the definition is unchecked: the call rests on obligations, listed with
+  the definition's own. If the call assumes another contract than the
+  definition states, it rests on its own obligation; that is a warning, and
+  the listing marks it;
+- no Cesta unit of the program defines the function (C or assembly, a
+  library, the linker): the call is listed as native, with its obligation.
+
+Every unit of a program must be compiled for the same ABI model and plain
+char. --obligations writes the list:
+
+  (cesta link-obligations/1 (program "app") (units 2) (checked-calls 3)
+    (native log_value (assumed "src/client.cesta" 30 "Writes ..."))
+    (unchecked fence (defined "include/reader.h" 6 "An empty ...")))
+
+Result refinement is deliberately bounded: a nonnull borrowed, static or owned
+result satisfies the corresponding nullable result. All parameter requirements,
+result origins and extents, rights, families and record effects stay equal.
+The reverse direction is refused. C prototypes, callback interfaces and shared
+complete record layouts must still agree.
+
+The optional ownership-composition model connects compatible contracts to
+admitted permission bodies and proves that call effects and permitted returns
+respect the caller's contract. A checked flag without body evidence does not
+close a call in that model. Qualification consumes actual emitted records and
+body plans, with allocation-family names interned across units. Private-state
+framing, source projection, native obligations, actual linker selection and
+compiler fidelity remain separate boundaries. This is not a proof of general
+C execution or of an arbitrary complete executable.
+
+cesta build does this for every program it links. An authored source writes
+its record beside its object (OUT/TARGET/obj/SOURCE.o.contracts), an archive
+carries its members' records beside it (LIBRARY.a.contracts), and the records
+of archives and objects among a program's link inputs take part. A program is
+linked only when its records compose; its list is written to
+OUT/TARGET/TARGET.obligations. A make-driven build runs cesta link-check
+itself.
+
+Contracts are compared as resolved, not as written: (function f) in one unit
+and (foreign f (obligation "...")) in another are one contract. They are
+compared for equality: a caller that assumes less than a checked definition
+provides (a nullable result that is never null) is reported as a difference.
+The linked definition is the program's own object first, then its inputs in
+link order; a definition the linker would choose otherwise (weak symbols, a
+library found by search) is outside the check. A unit with no ownership
+declaration has no record, and its functions are native to the check.
 
 SURVEYS
 
@@ -441,11 +649,13 @@ Use ordinary #include declarations to import a native library's public types.
 The ownership checker reads those actual headers through the selected compiler
 environment; a second copy of the library's typedefs is not an ABI witness.
 
-The plan contains one cesta-abi/1 SHA-256 fingerprint, along with its readable
+The plan contains one cesta-abi/2 SHA-256 fingerprint, along with its readable
 target, record sizes/alignments/field offsets, callable parameter/result layouts,
-and native-view element widths. The fingerprint covers that layout, the
-preprocessed translation unit, and the contents of the headers actually read.
-Input chunks are length delimited. Header paths are not hashed, so moving a
+and native-view element widths. The fingerprint covers that layout, the tokens
+of the preprocessed translation unit, the contents of the headers actually
+read, and the contents of the interface files beside them. Whitespace between
+the unit's tokens is not part of it, so a pin taken from an exported plan also
+holds when the same unit is compiled. Input chunks are length delimited. Header paths are not hashed, so moving a
 source tree without changing its contents preserves the fingerprint unless
 the program itself observes a path through a C macro such as __FILE__.
 
@@ -521,3 +731,44 @@ possible, without an invented no-match path. Returning arms remain terminal;
 break arms resume after the switch. Without default, the no-match path remains.
 Nested switch and loop exits retain their own target. These are ownership-plan
 control-flow facts, not a functional-correctness proof of the C implementation.
+
+POST-TEST LOOPS AND CLEANUP JUMPS
+
+Native ownership accepts do ... while, including do { ... } while (0) helper
+macros. The first body executes before its condition. Continue leaves the
+body's inner scope and reaches that condition; break skips the condition.
+An outer variable initialized on every first-iteration exit is available
+afterward. A constant-false condition requires no repeat invariant, so a
+single-iteration body may consume an owner. Otherwise the repeated body and
+condition must preserve the permissions at the repeat edge.
+
+Forward goto may target a label directly in the function's outer compound
+body. Jumps from nested blocks, loops and switch arms are supported. The
+checker ends loans in exited inner scopes, then checks the cleanup tail with
+the resources actually held on that incoming path:
+
+  int *p = reserve(sizeof(int));
+  if (!p) { dispose(p); return 0; }
+  int *q = reserve(sizeof(int));
+  if (!q) { dispose(q); goto out_p; }
+  ...
+  dispose(q);
+out_p:
+  dispose(p);
+  return 1;
+
+The tail is checked separately for each incoming path. An allocation cannot
+vanish at the jump, a released owner cannot be released again, and a loan
+cannot outlive the scope it leaves. A bypassed fixed-size declaration creates
+uninitialized storage at the label without executing its initializer. Reading
+it before an assignment is refused.
+
+Backward jumps, computed jumps and jumps into a nested block require further
+control-flow contracts and are refused by this ownership profile. Ordinary C
+compilation still accepts the native compiler's full control-flow language.
+
+Post-test bodies emit cesta-ownership/6 plans. Mandatory-body and latch records
+lower to the existing permission plan using PermissionIteration.resumeIteration;
+its execution law preserves return, break and continue targets, including
+nested branches and loops. Forward cleanup jumps record the tail's permission
+actions at the jump site. Neither lowering rewrites the emitted C control flow.

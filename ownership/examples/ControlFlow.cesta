@@ -1,0 +1,34 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (allocator heap malloc free
+        (obligation "C allocation family; failure is null and free accepts null.")))
+    (include <stddef.h>)
+    (native "
+void *malloc(size_t);
+void free(void *);
+
+#define INCREMENT_ONCE(value) do { ++(value); } while (0)
+
+int prepare_pair(int fail_second) {
+    int result = 0;
+    int *first = malloc(sizeof(int));
+    if (!first) { free(first); return 0; }
+    *first = 7;
+    if (fail_second) goto out_first;
+    int *second = malloc(sizeof(int));
+    if (!second) { free(second); goto out_first; }
+    *second = 3;
+    result = *first + *second;
+    INCREMENT_ONCE(result);
+    free(second);
+out_first:
+    free(first);
+    return result;
+}
+
+int main(void) {
+    int result = prepare_pair(0);
+    return !((result == 11 || result == 0) && prepare_pair(1) == 0);
+}
+")))

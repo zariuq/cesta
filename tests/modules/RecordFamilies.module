@@ -1,0 +1,26 @@
+Module RecordFamilies {
+  Theory Values() {
+    Empty Terms {
+      Box . ExternalDeclaration ::= "(" "value-box" DeclarationSpecifiers CGeneralName CGeneralName ")";
+    }
+    Equations {
+      (Box element name getter) == (Macro "cesta-macro/4" (Profile "c11") (Ports)
+        (Arguments
+          (Arg element (CType void) "syntax" (Evaluation "syntax"))
+          (Arg name (CType void) "syntax" (Evaluation "syntax"))
+          (Arg getter (CType void) "syntax" (Evaluation "syntax")))
+        (Result (CType void) "declarations")
+        (Locals
+          (Local tag "tag" (Export name))
+          (Local box_type "ordinary" (Export name))
+          (Local get "ordinary" (Export getter))
+          (Local value "member" tag)
+          (Local self "ordinary"))
+        (Template (unit
+          ("typedef" ("struct" (LocalRef "tag" tag) (List (TypeArgument element) (LocalRef "member" value))) (LocalRef "ordinary" box_type))
+          (fn ("static" inline (TypeArgument element)) (LocalRef "ordinary" get)
+            (List (List ("const" (LocalRef "ordinary" box_type)) ("*" (LocalRef "ordinary" self))))
+            ("return" (Member value (LocalRef "ordinary" self)))))));
+    }
+  }
+}

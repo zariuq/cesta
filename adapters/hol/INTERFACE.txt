@@ -95,10 +95,10 @@ names, plus the consumed span contract and resource-bridge theorem names.
 Re-run the gate to verify the proof. --runtime-only writes runtime.json
 instead, without theorem or proof-checker evidence.
 
-This is an explicit span-contract pilot, not yet the general cesta-hol --ir
-adapter. Cesta-to-IR refinement, the lifetime/allocation interpretation of the
-machine preconditions, and whole-program or cryptographic correctness remain
-separate obligations. The trace theorem concerns modeled architectural memory
+This is an explicit span-contract adapter. Its proof target is the selected
+machine code and its declared contract. The frontend's correspondence with
+that contract and whole-program or cryptographic correctness are outside this
+adapter's claims. The trace theorem concerns modeled architectural memory
 accesses; it does not assert constant-time execution or speculative safety.
 
 No upstream implementation is vendored. THIRD_PARTY.txt records the inspected

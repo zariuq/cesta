@@ -1,0 +1,20 @@
+(cesta checked-c/1
+  (module mixed_copy)
+  (word-bits 64)
+  (failure mixed_copy_failure)
+  (import "../../../checked/examples/CopySpan.cesta" as Copy)
+  (foreign count mixed_copy_count
+    (params (source usize) (capacity usize))
+    (returns usize) (effects)
+    (obligation "Calls the selected t-ISA count artifact through its explicit frame ABI; retains no storage. Exact machine correctness is qualified separately."))
+  (fn copy
+    (params (source (span u32 read)) (destination (span u32 write)))
+    (returns usize) (effects)
+    (body
+      (let count usize (call count (len source) (len destination)))
+      (require (le count (len source)))
+      (require (le count (len destination)))
+      (slice input (span u32 read) source (usize 0) count)
+      (slice output (span u32 write) destination (usize 0) count)
+      (call Copy_copy_u32 input output)
+      (return count))))

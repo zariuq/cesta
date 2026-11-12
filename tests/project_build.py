@@ -109,6 +109,14 @@ def dependency_controls(compiler, project):
 
     exported = project / "exported"
     run([*build, "--export-c", "exported"], project)
+    # The export names its objects without reference to the Cesta and
+    # compiler installed here: another copy of the tool writes the same recipe.
+    copy = project / "cesta-copy"
+    shutil.copy2(BINARY, copy)
+    run([copy, *build[1:], "--export-c", "exported-again"], project)
+    assert (project / "exported-again/GNUmakefile").read_bytes() == (exported / "GNUmakefile").read_bytes(), \
+        "the exported recipe depends on the tools that wrote it"
+    shutil.rmtree(project / "exported-again"); copy.unlink()
     assert (exported / "api #$ value.h").exists()
     assert not (exported / "exported").exists(), "include '.' copied the export recursively"
     assert not (exported / "out/app/app").exists(), "export copied a prebuilt application"

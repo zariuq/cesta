@@ -275,7 +275,7 @@ buffer ownership transitions. Its no-fault and return-contract laws cover every
 finite execution of the recorded control flow. The new checker also admits
 version-one byte plans. Count-to-byte and slice-index arithmetic have separate
 generic laws; the permission plan still erases scalar expressions and indices.
-It is not the proposed operational IR or a proof of C code generation.
+It does not model general C execution or prove C code generation.
 
 CheckedScalarOperations gives independent operational primitives for arithmetic
 guards and counted memory access. An intentional failure is distinct from an
@@ -283,7 +283,8 @@ invalid primitive operation. The arithmetic proofs relate subtraction/division
 overflow guards to unbounded mathematical specifications; span reads and writes
 prove fault avoidance under the actual storage extent, with preservation of
 unrelated cells. Invalid caller-provided storage remains an explicit fault.
-These leaves are not yet a complete function interpreter or an IR export.
+These are independent laws and test oracles for Cesta's checked operations.
+They do not require a complete function interpreter or an exported execution IR.
 
 Native allocator validity, foreign implementations, the source-to-plan
 projection, scalar lowering, printed C and GCC/Clang compilation are outside

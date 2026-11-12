@@ -1,0 +1,12 @@
+(cesta checked-c/1
+  (module prefix_length)
+  (word-bits 64)
+  (failure prefix_length_failure)
+  (fn count
+    (params (source usize) (capacity usize))
+    (returns usize)
+    (effects)
+    (body
+      (if (le source capacity)
+        (then (return source))
+        (else (return capacity))))))

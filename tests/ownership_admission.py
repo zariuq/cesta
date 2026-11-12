@@ -121,6 +121,11 @@ def body(events):
         return "(.branch "+body(event[1][1:])+" "+body(event[2][1:])+" "+body(rest)+")"
     if name == "loop":
         return "(.loop "+body(event[1:])+" "+body(rest)+")"
+    if name in ("once", "iteration"):
+        assert len(event) == 3 and event[1][0] == "first" and event[2][0] == "next"
+        normal = body(event[2][1:]+rest)
+        broken = body(rest) if name == "once" else ".breakLoop"
+        return "(Mettapedia.Machines.CMemory.PermissionFlow.resumeIteration "+body(event[1][1:])+" "+normal+" "+broken+")"
     if name == "switch":
         # Conditions are erased to nondeterminism, including no matching arm.
         # Each arm owns its break; outer loop transfers remain distinct.
@@ -229,8 +234,8 @@ def function(declaration):
 
 def module_parts(record):
     assert record[0] == "Ownership" and isinstance(record[1],Text) and record[1].data in (
-        b"cesta-ownership/2", b"cesta-ownership/3", b"cesta-ownership/4")
-    if record[1].data != b"cesta-ownership/4":
+        b"cesta-ownership/2", b"cesta-ownership/3", b"cesta-ownership/4", b"cesta-ownership/5", b"cesta-ownership/6", b"cesta-ownership/7")
+    if record[1].data not in (b"cesta-ownership/4", b"cesta-ownership/5", b"cesta-ownership/6", b"cesta-ownership/7"):
         def old_syntax(item):
             if isinstance(item, list):
                 assert not item or item[0] not in ("whole-root", "whole-view", "whole-viewed")
@@ -239,10 +244,13 @@ def module_parts(record):
         old_syntax(record)
     foreign, functions = [], []
     abi = False
+    callbacks = False
+    interfaces = {}
+    implementations = []
     for item in record[2:]:
         if item[0] == "abi":
-            assert not abi and record[1].data in (b"cesta-ownership/3", b"cesta-ownership/4")
-            assert len(item) == 4 and isinstance(item[1],Text) and item[1].data == b"cesta-abi/1"
+            assert not abi and record[1].data in (b"cesta-ownership/3", b"cesta-ownership/4", b"cesta-ownership/5", b"cesta-ownership/6", b"cesta-ownership/7")
+            assert len(item) == 4 and isinstance(item[1],Text) and item[1].data == b"cesta-abi/2"
             assert len(item[2]) == 2 and item[2][0] == 'sha256' and isinstance(item[2][1],Text)
             digest = item[2][1].data
             assert len(digest) == 64 and all(c in b'0123456789abcdef' for c in digest)
@@ -250,6 +258,28 @@ def module_parts(record):
             # Native header/layout binding is checked when the frontend
             # regenerates the plan. This digest is not a Lean ABI theorem.
             abi = True
+        elif item[0] == "callbacks":
+            assert record[1].data in (b"cesta-ownership/5", b"cesta-ownership/6", b"cesta-ownership/7") and not callbacks and len(item)>1
+            callbacks = True
+            groups = set()
+            for group in item[1:]:
+                assert len(group)>=2 and all(isinstance(x,str) for x in group)
+                assert group[0] not in groups and len(set(group[1:]))==len(group)-1
+                groups.add(group[0])
+        elif item[0] == 'callback-interfaces':
+            assert record[1].data == b'cesta-ownership/7' and not interfaces and len(item)>1
+            for interface in item[1:]:
+                assert len(interface)==2 and all(isinstance(x,str) for x in interface)
+                name, target = map(str,interface)
+                assert name not in interfaces and target == '@callback/' + name
+                interfaces[name] = target
+        elif item[0] == 'callback-implementations':
+            assert record[1].data == b'cesta-ownership/7' and not implementations and len(item)>1
+            for implementation in item[1:]:
+                assert len(implementation)==2 and all(isinstance(x,str) for x in implementation)
+                pair = tuple(map(str,implementation))
+                assert pair not in implementations
+                implementations.append(pair)
         elif item[0] == "foreign":
             assert len(item) == 4 and item[3][0] == "obligation" and len(item[3]) == 2 and isinstance(item[3][1],Text)
             foreign.append((str(item[1]),signature(item[2]),item[3][1].data.decode()))
@@ -258,8 +288,10 @@ def module_parts(record):
             parameters, inputs = item[2][1][1:], item[3][1:]
             whole = {str(root) for parameter, root in zip(parameters, inputs) if parameter[0] == 'viewed'}
             if whole:
-                assert record[1].data == b'cesta-ownership/4', 'whole-view bodies need explicit extent units'
+                assert record[1].data in (b'cesta-ownership/4', b'cesta-ownership/5', b'cesta-ownership/6', b'cesta-ownership/7'), 'whole-view bodies need explicit extent units'
             for event in walk(item[6][1:]):
+                if event[0] in ('once', 'iteration'):
+                    assert record[1].data in (b'cesta-ownership/6', b'cesta-ownership/7'), 'post-test control requires version six or seven'
                 if event[0] == 'whole-root':
                     assert str(event[1]) in whole, 'whole root must name a declared viewed input'
                 elif event[0] == 'root':
@@ -268,6 +300,11 @@ def module_parts(record):
                     assert str(event[2]) in whole, 'whole view must preserve its abstract input root'
             functions.append(item)
     assert functions
+    assert callbacks or record[1].data != b"cesta-ownership/5"
+    assert bool(interfaces) == (record[1].data == b'cesta-ownership/7')
+    assert set(interfaces.values()) <= {name for name, _, _ in foreign}
+    names = {name for name, _, _ in foreign} | {str(f[1]) for f in functions}
+    assert all(name in interfaces and target in names for name, target in implementations)
     return foreign, functions
 
 
@@ -278,6 +315,8 @@ def walk(events):
             yield from walk(event[1][1:]); yield from walk(event[2][1:])
         elif event[0] == "loop":
             yield from walk(event[1:])
+        elif event[0] in ("once", "iteration"):
+            yield from walk(event[1][1:]); yield from walk(event[2][1:])
         elif event[0] in ("switch", "switch-total"):
             for arm in event[1:]:
                 yield from walk(arm[1:])
@@ -338,10 +377,13 @@ def mutations(declaration):
 
 
 def admit_record(record, path, lean_root, controls=True, cache=True, assemble=True):
+    path = Path(path).resolve()
     foreign, functions = module_parts(record)
     names = [name for name,_,_ in foreign]+[str(f[1]) for f in functions]
     assert len(names) == len(set(names))
-    prefix = path.stem+"Parts"
+    # Artifact basenames are file names, not Lean identifiers. Keep the module
+    # name valid for spaces, hyphens, Unicode and leading digits alike.
+    prefix = "Ownership"+hashlib.sha256(path.name.encode()).hexdigest()[:20]+"Parts"
     directory = path.parent/prefix
     directory.mkdir(parents=True,exist_ok=True)
     environment = dict(os.environ)
@@ -358,7 +400,9 @@ def admit_record(record, path, lean_root, controls=True, cache=True, assemble=Tr
         context.update(name.encode());context.update(artifact.read_bytes())
     context_key=context.hexdigest()
     cached=0
-    imports = ["import Mettapedia.GSLT.LanguageDef.OwnershipViewExtents"]
+    imports = ["import Mettapedia.GSLT.LanguageDef.OwnershipViewExtents",
+               "import Mettapedia.Machines.CMemory.PermissionIteration",
+               "import Mettapedia.GSLT.LanguageDef.OwnershipCallbacks"]
     setup = ["open Mettapedia.GSLT.LanguageDef.Ownership", "set_option maxRecDepth 200000",
         "set_option maxHeartbeats 0", "namespace "+prefix]
     def compile_file(source, text, export=True):
@@ -388,16 +432,40 @@ def admit_record(record, path, lean_root, controls=True, cache=True, assemble=Tr
             checkpoint.write_text(json.dumps(dict(context=context_key,source=source_hash,
                 artifact=hashlib.sha256(artifact.read_bytes()).hexdigest()),indent=2)+'\n')
         return round(time.monotonic()-started,3)
+    signatures = [(n,s) for n,s,_ in foreign]+[(str(f[1]),signature(f[2])) for f in functions]
+    callback_checks = []
+    for item in record[2:]:
+        if item[0] != "callbacks": continue
+        for index, group in enumerate(item[1:]):
+            targets = [str(n) for n in group[1:]]
+            assert all(n in names for n in targets), "callback target is absent from the module"
+            contract = dict(signatures)[targets[0]]
+            callback_checks.append("theorem callback"+str(index)+" : Callbacks.agrees callables ("+
+                contract+") ["+", ".join(json.dumps(n) for n in targets)+"] = true := by decide")
+    interface_targets = {str(group[0]):str(group[1]) for item in record[2:]
+                         if item[0] == 'callback-interfaces' for group in item[1:]}
+    for index, (name, target) in enumerate(interface_targets.items()):
+        contract = dict(signatures)[target]
+        callback_checks.append(f'theorem interface{index} : signatureValid ({contract}) = true := by decide')
+    implementation_index = 0
+    for item in record[2:]:
+        if item[0] != 'callback-implementations':
+            continue
+        for name, target in item[1:]:
+            contract = dict(signatures)[interface_targets[str(name)]]
+            callback_checks.append(f'theorem implementation{implementation_index} : '
+                f'Callbacks.acceptsSignature callables ({contract}) {json.dumps(str(target))} = true := by decide')
+            implementation_index += 1
     compile_file(directory/"Names.lean","\n".join(imports+setup+[
         "def callables : List Callable := ["+", ".join("⟨"+json.dumps(n)+", "+s+"⟩" for n,s in
-            [(n,s) for n,s,_ in foreign]+[(str(f[1]),signature(f[2])) for f in functions])+ "]", "end "+prefix])+"\n")
+            signatures)+ "]"]+callback_checks+["end "+prefix])+"\n")
     checks = rejected = 0
     timings = []
     for index, item in enumerate(functions):
         declarations = ["import "+prefix+".Names"]+setup
         declarations.append(f"def fn{index} : Function := "+function(item))
         declarations.append(f"theorem accepts{index} : admitFunction callables fn{index} = true := by decide +kernel")
-        if record[1].data == b"cesta-ownership/4":
+        if record[1].data in (b"cesta-ownership/4", b"cesta-ownership/5", b"cesta-ownership/6", b"cesta-ownership/7"):
             declarations.append(f"theorem extent_prefix{index} (bytes : Nat → Nat) (reached : State) "
                 f"(path : Mettapedia.Machines.CMemory.PermissionFlow.Prefix "
                 f"(enabled callables fn{index}) fn{index}.body initial reached) : "

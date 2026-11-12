@@ -1,0 +1,14 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (include "mixed_kernel.h")
+    (native "
+size_t mixed_kernel_copy(TcIsaRuntimeFrame *frame,
+                         cesta_read_u32_span source,
+                         cesta_write_u32_span destination) {
+  size_t count = (size_t)prefix_length_tisa(frame, source.len, destination.len);
+  if (frame->status != TISA_OUTCOME_FIRED) return SIZE_MAX;
+  cesta_read_u32_span prefix = {source.data, count};
+  copy_span_copy_u32(prefix, destination);
+  return count;
+}
+")))

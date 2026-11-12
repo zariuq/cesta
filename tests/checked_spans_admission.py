@@ -131,6 +131,7 @@ def main():
              "set_option maxRecDepth 32768", "set_option maxHeartbeats 16000000", "open " + MODEL]
     positives = negatives = 0
     for source in [source, ROOT / "checked/examples/FlatFire.cesta", ROOT / "checked/examples/CopySpan.cesta",
+                   ROOT / "adapters/tisa/examples/MixedCopy.cesta",
                    ROOT / "checked/examples/ByteViews.cesta", ROOT / "checked/examples/Owners.cesta"]:
         raw = checked_spans.run([checked_spans.BINARY, "checked", "plan", source]).stdout
         (work / (source.stem + ".plan")).write_bytes(raw)

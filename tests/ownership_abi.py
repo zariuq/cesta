@@ -57,11 +57,11 @@ uint32_t fetch(const Item *item){return item->value;}
 '''
 
 
-def document(pin=None):
+def document(pin=None,body=BODY):
     return '(cesta native-c/1 compact-c/2 (unit (ownership (check-all) '+\
         '(view Words data len read u32) '+\
         ('(abi-fingerprint '+json.dumps(pin)+') ' if pin else '')+\
-        ') (native '+json.dumps(BODY)+')))'
+        ') (native '+json.dumps(body)+')))'
 
 
 def export(directory,cc,flags=()):
@@ -89,6 +89,17 @@ def main():
         pinned,_,_=export(moved,cc)
         assert pinned==expected,'pin changes its own ABI fingerprint'
         run([BINARY,'cc','--cc',cc,'-std=c11','-fsyntax-only',moved/'unit.cesta'])
+        # A unit written over several lines is laid out differently by export
+        # and by compilation; a pin taken from the exported plan holds for both.
+        spread=work/cc/'spread';spread.mkdir();(spread/'interface.h').write_text(HEADER)
+        body=BODY.replace('{return item->value;}','{\n    uint32_t value = item->value;\n\n    return value;\n}')
+        lines=lambda text:text.replace('(unit (ownership','(unit\n\n  (ownership').replace(') (native ',')\n\n\n  (native ')
+        assert body!=BODY and lines(document(body=body)).count('\n')==5
+        (spread/'unit.cesta').write_text(lines(document(body=body)))
+        laid,_,_=export(spread,cc)
+        (spread/'unit.cesta').write_text(lines(document(laid,body)))
+        assert export(spread,cc)[0]==laid
+        run([BINARY,'cc','--cc',cc,'-std=c11','-fsyntax-only',spread/'unit.cesta'])
         for header in (HEADER+'/* API edition changed. */\n',
                        HEADER.replace('uint8_t tag','uint64_t tag'),
                        HEADER.replace('uint32_t value','uint16_t value'),

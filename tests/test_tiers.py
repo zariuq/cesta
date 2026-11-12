@@ -22,6 +22,9 @@ test-source-driver test-type-admission test-unicode-names test-whole-program-tre
 
 # Gates that read external corpora or build Lean belong only to qualify.
 QUALIFICATION_ONLY = """
+test-compiler-sanitizers
+test-ownership-control-flow-admission
+test-ownership-refinement-admission test-ownership-callback-interfaces-admission
 test-corpora test-c11parser test-lean test-macro-admission test-macro-port-admission test-metadata
 test-conflict-admission test-schema-extension-admission test-type-admission test-presentation-admission
 test-presentation-corpora test-semantic-corpora test-pp-corpora test-provenance-corpora test-mutants test-petta
@@ -34,7 +37,7 @@ test-checked-model test-checked-admission test-checked-sanitizers test-checked-g
 test-ownership-model test-ownership-admission test-ownership-staging
 test-ownership-arrays-admission test-ownership-nullable-loops-admission
 test-checked-spans-admission test-checked-contracts-admission test-checked-operations-admission
-test-ownership-record-results-admission test-ownership-record-values-admission test-ownership-whole-views-admission test-tcalc-event-view
+test-ownership-record-results-admission test-ownership-record-values-admission test-ownership-whole-views-admission test-tcalc-event-view test-tcalc-recorded-cursor
 """.split()
 
 

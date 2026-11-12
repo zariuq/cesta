@@ -3,6 +3,7 @@
 #include "project.h"
 #include "cesta.h"
 #include "diagnose.h"
+#include "link.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -305,17 +306,32 @@ static bool read_dependencies(CeArena *arena, const char *depfile, Words *names)
     return true;
 }
 
-static bool dependencies_current(CeArena *arena, const char *depfile, struct timespec object) {
+static bool suffix_is(const char *path, const char *suffix);
+
+/* A unit checked for ownership (its object has a contracts record) is also
+   checked with the contracts kept beside each header it reads, NAME.ownership.
+   The dependency file lists those the last check read. One beside a listed
+   header that is not itself listed has appeared since, whatever its
+   timestamp says, so the unit is checked again. */
+static bool dependencies_current(CeArena *arena, const char *depfile, const char *source,
+                                 struct timespec object, bool interfaces) {
     Words names = {0}; bool current = read_dependencies(arena,depfile,&names) && names.len != 0;
     for (size_t i = 0; current && i < names.len; ++i) {
         struct timespec t;
         current = mtime(names.items[i],&t) && !newer(t,object);
+        if (!current || !interfaces || suffix_is(names.items[i],".ownership") || ce_same_file(names.items[i],source))
+            continue;
+        const char *companion = join(arena,names.items[i],".ownership","");
+        if (!mtime(companion,&t)) continue;
+        bool listed = false;
+        for (size_t k = 0; !listed && k < names.len; ++k)
+            listed = suffix_is(names.items[k],".ownership") && ce_same_file(names.items[k],companion);
+        current = listed;
     }
     words_free(&names); return current;
 }
 
 typedef struct { pid_t pid; const char *output, *target; char **identity; } Job;
-static bool suffix_is(const char *path, const char *suffix);
 
 static pid_t start(char **argv) {
     pid_t pid;
@@ -421,14 +437,20 @@ static void source_flags(Project *p, const Target *t, const char *path, Words *o
 
 /* Compilation identity is independent of the consuming target. The shared
    object keeps the source basename below a content-addressed directory so
-   archive member names and final artifact bytes remain unchanged. */
+   archive member names and final artifact bytes remain unchanged. An
+   exported project compiles plain C without Cesta, on another machine: its
+   object names follow the source, its flags and the compiler's name, not
+   the tools installed here. */
 static const char *shared_object_path(Project *p, const Target *t, const Options *o,
-                                      const char *source, const Words *flags) {
+                                      const char *source, const Words *flags, bool exported) {
     Words identity = {0};
     bool uses_cesta = p->read_warnings || suffix_is(source,".cesta") || suffix_is(source,".csexp");
-    if (uses_cesta) push(&identity,(char *)o->self_identity);
-    push(&identity,(char *)o->compiler_identity);
-    push(&identity,p->read_warnings ? "read-warnings" : "no-read-warnings");
+    if (exported) push(&identity,(char *)o->compiler);
+    else {
+        if (uses_cesta) push(&identity,(char *)o->self_identity);
+        push(&identity,(char *)o->compiler_identity);
+        push(&identity,p->read_warnings ? "read-warnings" : "no-read-warnings");
+    }
     push(&identity,(char *)source);
     for (size_t i = 0; i < flags->len; ++i) push(&identity,flags->items[i]);
     const Words *inputs = &p->compile_inputs[t-p->targets];
@@ -455,7 +477,12 @@ static bool materialize_object(CeArena *arena, const char *shared, const char *t
     const char *suffixes[] = {".d",".cmd"};
     for (size_t i = 0; i < sizeof suffixes/sizeof *suffixes; ++i)
         if (!link_one(arena,join(arena,shared,suffixes[i],""),join(arena,target,suffixes[i],""))) return false;
-    return true;
+    /* Only a unit checked for ownership has a contracts record; an object
+       that no longer has one must not keep an earlier one beside it. */
+    const char *record = join(arena,shared,".contracts",""), *beside = join(arena,target,".contracts","");
+    struct stat st;
+    if (!stat(record,&st)) return link_one(arena,record,beside);
+    return !unlink(beside) || errno == ENOENT;
 }
 
 static const char *target_output(Project *p, const Target *t) {
@@ -710,6 +737,8 @@ static int build_generator(Project *p, const Target *t, const Options *o) {
     return 0;
 }
 
+static bool is_file(const char *path);
+
 /* Compile every out-of-date source of the target, at most `jobs` at a time;
    then link or archive when needed. */
 static int build_target(Project *p, const Target *t, const Options *o) {
@@ -742,7 +771,7 @@ static int build_target(Project *p, const Target *t, const Options *o) {
                     ok = materialize_object(arena,running[k].output,running[k].target);
                     if (!ok) fprintf(stderr,"cesta build: cannot share %s as %s\n",running[k].output,running[k].target);
                 }
-                else { ++failures; unlink(running[k].output); }
+                else { ++failures; unlink(running[k].output); unlink(join(arena,running[k].output,".contracts","")); }
                 if (!ok && WIFEXITED(status) && !WEXITSTATUS(status)) ++failures;
                 running[k] = running[--nrunning]; break;
             }
@@ -751,19 +780,26 @@ static int build_target(Project *p, const Target *t, const Options *o) {
         const char *source = sources.items[i];
         const char *object = join(arena,directory,"/obj/",join(arena,source,".o",""));
         Words flags = {0}; source_flags(p,t,source,&flags);
-        const char *shared = shared_object_path(p,t,o,source,&flags);
+        const char *shared = shared_object_path(p,t,o,source,&flags,false);
         const char *depfile = join(arena,shared,".d","");
         push(&objects,(char *)object);
         push(&object_identities,(char *)shared);
+        bool authored = suffix_is(source,".cesta") || suffix_is(source,".csexp");
+        const char *contracts = join(arena,shared,".contracts","");
         Words cc = {0};
         push(&cc,(char *)o->self); push(&cc,"cc"); push(&cc,"--cc"); push(&cc,(char *)o->compiler);
+        /* An authored unit records what it defines and what its checked
+           bodies call elsewhere, for the link check. */
+        if (authored) { push(&cc,"--contracts"); push(&cc,(char *)contracts); }
         if (p->read_warnings) push(&cc,"--read-warnings");
         for (size_t k = 0; k < flags.len; ++k) push(&cc,flags.items[k]);
         push(&cc,"-MMD"); push(&cc,"-MF"); push(&cc,(char *)depfile);
         push(&cc,"-c"); push(&cc,(char *)source); push(&cc,"-o"); push(&cc,(char *)shared);
         struct timespec built;
         struct timespec generator;
-        bool uses_cesta = p->read_warnings || suffix_is(source,".cesta") || suffix_is(source,".csexp");
+        bool uses_cesta = p->read_warnings || authored;
+        struct stat record;
+        bool checked_unit = authored && !stat(contracts,&record);
         /* Plain inputs delegate unchanged: cache their native command. An
            authored input or census additionally depends on this Cesta tool. */
         char **identity = uses_cesta ? cc.items : cc.items+3;
@@ -774,7 +810,7 @@ static int build_target(Project *p, const Target *t, const Options *o) {
         }
         if (mtime(shared,&built) && same_command(arena,shared,identity) &&
             (!uses_cesta || (mtime(o->self,&generator) && !newer(generator,built))) &&
-            response_current && dependencies_current(arena,depfile,built)) {
+            response_current && dependencies_current(arena,depfile,source,built,checked_unit)) {
             if (!materialize_object(arena,shared,object)) {
                 fprintf(stderr,"cesta build: cannot share %s as %s\n",shared,object); ++failures;
             } else ++current;
@@ -817,7 +853,28 @@ static int build_target(Project *p, const Target *t, const Options *o) {
             struct timespec t2;
             needed = !mtime(inputs->items[k],&t2) || newer(t2,linked);
         }
+        /* The link records of the program's checked units: its own objects,
+           then the archives and objects among its inputs. */
+        Words records = {0}; CeLinkSummary summary = {0}; CeError link_error = {{0},0};
+        const char *obligations = join(arena,directory,"/",join(arena,t->name,".obligations",""));
+        bool composed = true;
         if (needed) {
+            for (size_t k = 0; k < objects.len; ++k) {
+                const char *record = join(arena,objects.items[k],".contracts","");
+                if (is_file(record)) push(&records,(char *)record);
+            }
+            for (size_t k = 0; !archive && k < inputs->len; ++k) {
+                const char *record = join(arena,inputs->items[k],".contracts","");
+                if (is_file(record)) push(&records,(char *)record);
+            }
+            /* Every call a checked unit makes into another must meet the
+               definition linked here, or stay a listed obligation. */
+            if (!archive && records.len) {
+                composed = ce_link_check(arena,t->name,records.items,records.len,obligations,&summary,&link_error);
+                if (!composed) { fprintf(stderr,"cesta build: %s: %s\n",t->name,link_error.message); result = 1; }
+            } else if (!archive) unlink(obligations);
+        }
+        if (needed && composed) {
             if (!make_directories(parent(arena,output))) { fprintf(stderr,"cesta build: cannot create %s\n",parent(arena,output)); result = 1; }
             else {
                 if (archive) unlink(output);
@@ -828,11 +885,21 @@ static int build_target(Project *p, const Target *t, const Options *o) {
                     while (waitpid(pid,&status,0) < 0 && errno == EINTR) {}
                     result = WIFEXITED(status) && !WEXITSTATUS(status) ? 0 : 1;
                 }
+                /* An archive carries its members' records to the programs that link it. */
+                if (!result && archive && !ce_link_merge(arena,records.items,records.len,join(arena,output,".contracts",""),&link_error)) {
+                    fprintf(stderr,"cesta build: %s: %s\n",t->name,link_error.message); result = 1;
+                }
                 if (!result) record_command(arena,output,link_identity.items);
             }
         }
         fprintf(stderr,"cesta build: %s: %zu compiled, %zu up to date; %s %s\n",t->name,compiled,current,
                 result ? "failed" : needed ? (archive ? "archived" : "linked") : "current",output);
+        if (needed && !result && !archive && records.len)
+            fprintf(stderr,"cesta build: %s: contracts: %zu units; %zu calls into other units meet checked definitions; "
+                    "%zu native and %zu unchecked functions remain obligations; "
+                    "%zu calls differ from their unchecked definitions (%s)\n",
+                    t->name,summary.units,summary.checked,summary.native,summary.unchecked,summary.differing,obligations);
+        words_free(&records);
         words_free(&link); words_free(&link_identity);
     } else fprintf(stderr,"cesta build: %s: %zu of %zu sources failed\n",t->name,failures,sources.len);
     words_free(&sources); words_free(&objects); words_free(&object_identities);
@@ -991,7 +1058,7 @@ static int export_targets(Project *p, const Options *o, const char *into) {
             words_free(&flags); source_flags(p,t,source,&flags);
             if (!local_export_path(p,source)) { result = 1; break; }
             const char *object = join(arena,p->out,"/",join(arena,t->name,"/obj/",join(arena,source,".o","")));
-            const char *shared = shared_object_path(p,t,o,source,&flags);
+            const char *shared = shared_object_path(p,t,o,source,&flags,true);
             bool emitted = false;
             for (size_t k = 0; k < emitted_objects.len; ++k) emitted |= !strcmp(emitted_objects.items[k],shared);
             if (suffix_is(source,".cesta") || suffix_is(source,".csexp")) {

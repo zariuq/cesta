@@ -107,6 +107,7 @@ OWNER_START = 'int *p=(int *)reserve(sizeof(int)); if(!p) { dispose(p); return 0
 TICKET_C = 'typedef struct {unsigned long long identity;} Ticket; extern Ticket *issue(void); extern void perform(Ticket *); extern int inspect(const Ticket *); '
 TICKET_CONTRACT = '(capability Ticket effects) (foreign issue (returns-own effects) (obligation "Issues one fresh live effect permit for this logical call.")) (foreign perform (owns 0 effects) (obligation "Consumes the supplied permit and performs its call effect at most once.")) (foreign inspect (obligation "Reads the valid handle without retaining or consuming it."))'
 POSITIVE.update({
+    "function_name_shadowed_by_consuming_pointer": (HEAP_C + 'void f(int *p) {(void)p;} void h(int *p) {dispose(p);} int g(void) {int *p=(int *)reserve(sizeof(int));if(!p){dispose(p);return 0;}void (*f)(int *)=h;f(p);return 0;}', HEAP_CONTRACT + ' (function h (owns 0 heap))'),
     "transitive_global_call": ('static int n; int owner(void) {return ++n;} int relay(void) {return owner();} int f(void) {return relay();}', '(global n owner)'),
     "recursive_global_call": ('static int n; int owner(int); int relay(int depth) {return depth ? owner(depth-1) : 0;} int owner(int depth) {++n;return depth ? relay(depth-1) : n;}', '(global n owner)'),
     "variadic_global_call": ('static int n; int owner(int value,...) {n+=value;return n;} int f(void) {return owner(1,2);}', '(global n owner)'),
@@ -124,7 +125,10 @@ NEGATIVE.update({
     "indirect_global_reentry": ('static int n; int owner(void); void relay(void) {(void)owner();} int owner(void) {int *p=&n;relay();return *p;}', '(global n owner)', 'overlapping loan'),
     "global_alias_through_helper": ('static int n; void owner(int step); void relay(const int *p) {owner(0);(void)*p;} void owner(int step) {if(step)relay(&n);else ++n;}', '(global n owner)', 'overlapping loan'),
     "global_alias_in_record": ('static int n; typedef struct {const int *view;} Reader; void owner(int step); void relay(const Reader *p) {owner(0);(void)*p->view;} void owner(int step) {if(step){Reader r={&n};relay(&r);}else ++n;}', '(global n owner) (record Reader (field view (borrow read)))', 'overlapping loan'),
-    "function_name_shadowed_by_pointer": ('int f(int value) {return value;} int g(void) {int (*f)(int);return f(1);}', '', 'checked body'),
+    # A local pointer hides the function of the same name: the call goes where the pointer does.
+    "function_name_shadowed_by_pointer": ('int f(int value) {return value;} int g(void) {int (*f)(int);return f(1);}', '', 'uninitialized or moved value'),
+    "function_name_shadowed_by_parameter": ('int f(int value) {return value;} int g(int (*f)(int)) {return f(1);}', '', 'checked body'),
+    "function_name_shadowed_by_consuming_pointer": (HEAP_C + 'void f(int *p) {(void)p;} void h(int *p) {dispose(p);} int g(void) {int *p=(int *)reserve(sizeof(int));if(!p){dispose(p);return 0;}void (*f)(int *)=h;f(p);dispose(p);return 0;}', HEAP_CONTRACT + ' (function h (owns 0 heap))', 'moved value'),
     "argument_consumed_before_call": (TICKET_C + 'extern void perform_value(Ticket *,int);int f(void) {Ticket *t=issue();perform_value(t,(perform(t),7));return 0;}', TICKET_CONTRACT + ' (foreign perform_value (owns 0 effects) (obligation "Consumes the supplied permit once."))', 'moved'),
     "capability_forged_ticket": (TICKET_C + 'int f(void) {Ticket t={7};perform(&t);return 0;}', TICKET_CONTRACT, 'declared issuer'),
     "capability_field_bypass": (TICKET_C + 'int f(void) {Ticket *t=issue();t->identity=7;perform(t);return 0;}', TICKET_CONTRACT, 'representation is private'),

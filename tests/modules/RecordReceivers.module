@@ -1,0 +1,48 @@
+Module RecordReceivers {
+  Theory Receivers() {
+    Empty Terms {
+      Peek . ExternalDeclaration ::= "(" "peek" DeclarationSpecifiers DeclarationSpecifiers CGeneralName CGeneralName ")";
+      PeekShaped . ExternalDeclaration ::= "(" "peek-pointer" DeclarationSpecifiers DeclarationSpecifiers CGeneralName CGeneralName ")";
+    }
+    Equations {
+      (Peek element receiver name getter) == (Macro "cesta-macro/4" (Profile "c11") (Ports)
+        (Arguments
+          (Arg element (CType void) "syntax" (Evaluation "syntax"))
+          (Arg receiver (CType void) "syntax" (Evaluation "syntax"))
+          (Arg name (CType void) "syntax" (Evaluation "syntax"))
+          (Arg getter (CType void) "syntax" (Evaluation "syntax")))
+        (Result (CType void) "declarations")
+        (Locals
+          (Local tag "tag" (Export name))
+          (Local box_type "ordinary" (Export name))
+          (Local get "ordinary" (Export getter))
+          (Local value "member" tag)
+          (Local self "ordinary"))
+        (Template (unit
+          ("typedef" ("struct" (LocalRef "tag" tag) (List (TypeArgument element) (LocalRef "member" value))) (LocalRef "ordinary" box_type))
+          (fn ("static" inline (TypeArgument element)) (LocalRef "ordinary" get)
+            (List (List ("const" (TypeArgument receiver)) ("*" (LocalRef "ordinary" self))))
+            ("return" (Member value (LocalRef "ordinary" self)))))));
+      (PeekShaped element receiver name getter) == (Macro "cesta-macro/4" (Profile "c11") (Ports)
+        (Arguments
+          (Arg element (CType void) "syntax" (Evaluation "syntax"))
+          (Arg receiver (CType void) "syntax" (Evaluation "syntax"))
+          (Arg name (CType void) "syntax" (Evaluation "syntax"))
+          (Arg getter (CType void) "syntax" (Evaluation "syntax")))
+        (Result (CType void) "declarations")
+        (Locals
+          (Local tag "tag" (Export name))
+          (Local box_type "ordinary" (Export name))
+          (Local get "ordinary" (Export getter))
+          (Local value "member" tag)
+          (Local self "ordinary"))
+        (Template (unit
+          ("typedef" ("struct" (LocalRef "tag" tag) (List (TypeArgument element) (LocalRef "member" value))) (LocalRef "ordinary" box_type))
+          ("fn-shape" ("static" inline ("const" (TypeArgument element)))
+            ("*" ("function" (LocalRef "ordinary" get)
+              (List ("const" (TypeArgument receiver)) ("*" (LocalRef "ordinary" self)))))
+            (List)
+            (block ("return" ("&" (Member value (LocalRef "ordinary" self)))))))));
+    }
+  }
+}

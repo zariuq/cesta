@@ -1,7 +1,7 @@
 """Optional exact-object span-copy pilot using external HOL Light/s2n-bignum.
 
-This proves a declared copy contract. The general checked-IR adapter is a
-separate interface; no source-to-IR refinement is asserted by this runner.
+This proves a declared copy contract for selected compiler artifacts. It does
+not prove the frontend's translation or general C execution.
 """
 
 import argparse

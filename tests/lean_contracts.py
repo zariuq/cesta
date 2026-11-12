@@ -84,6 +84,7 @@ PROTOCOL_MODULES = [
 ]
 CHECKED_MODULES = [
     "Mettapedia.Machines.CMemory.PermissionFlow",
+    "Mettapedia.Machines.CMemory.PermissionIteration",
     "Mettapedia.GSLT.LanguageDef.CheckedBytes",
     "Mettapedia.GSLT.LanguageDef.CheckedBytePlans",
     "Mettapedia.GSLT.LanguageDef.CheckedByteSafety",
@@ -97,11 +98,15 @@ OWNERSHIP_MODULES = [
     "Mettapedia.Machines.CMemory.SpatialLoans",
     "Mettapedia.Machines.CMemory.Borrowing",
     "Mettapedia.Machines.CMemory.PermissionFlow",
+    "Mettapedia.Machines.CMemory.PermissionIteration",
     "Mettapedia.Languages.C11.BorrowingLayouts",
     "Mettapedia.GSLT.LanguageDef.OwnershipPlans",
     "Mettapedia.GSLT.LanguageDef.OwnershipCalls",
-    "Mettapedia.GSLT.LanguageDef.OwnershipViews",
     "Mettapedia.GSLT.LanguageDef.OwnershipAdmission",
+    "Mettapedia.GSLT.LanguageDef.OwnershipRefinement",
+    "Mettapedia.GSLT.LanguageDef.OwnershipCallbacks",
+    "Mettapedia.GSLT.LanguageDef.OwnershipViews",
+    "Mettapedia.GSLT.LanguageDef.OwnershipComposition",
     "Mettapedia.Machines.CMemory.RegionScaling",
     "Mettapedia.GSLT.LanguageDef.OwnershipViewExtents",
 ]

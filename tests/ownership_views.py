@@ -10,6 +10,7 @@ import checked_admission
 import ownership_admission
 
 ROOT = Path(__file__).resolve().parent.parent
+BINARY = ROOT / "build/cesta"
 EXAMPLE = ROOT / "ownership/examples/ByteViews"
 
 
@@ -39,7 +40,7 @@ def erase_ownership(source):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--cesta", type=Path, default=ROOT / "build/cesta")
+    p.add_argument("--cesta", type=Path, default=BINARY)
     p.add_argument("--output", type=Path, default=ROOT / "build/ownership-views")
     p.add_argument("--lean-root", type=Path)
     p.add_argument("--admit", action="store_true")
