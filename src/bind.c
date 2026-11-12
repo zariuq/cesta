@@ -101,6 +101,16 @@ const CeUse *ce_sema_use(const CeSema *sema, const CeTree *node) {
     size_t index = (size_t)(uintptr_t)ce_pointer_get(&sema->use_of,node);
     return index ? &sema->uses[index-1] : NULL;
 }
+void ce_sema_field_use(CeSema *sema, const CeTree *node, const CeMember *member,
+                       CeType *through, unsigned kind) {
+    if (!sema->track_fields || ce_pointer_get(&sema->field_use_of,node)) return;
+    if (sema->nfield_uses == sema->field_use_capacity) {
+        sema->field_use_capacity = sema->field_use_capacity ? sema->field_use_capacity*2 : 64;
+        sema->field_uses = ce_resize(sema->field_uses,sema->field_use_capacity,sizeof(*sema->field_uses));
+    }
+    sema->field_uses[sema->nfield_uses++] = (CeFieldUse){node,member,through,kind};
+    ce_pointer_put(&sema->field_use_of,node,(void *)(uintptr_t)sema->nfield_uses);
+}
 static unsigned folded_depth;
 static void record_use(CeSema *sema, const CeTree *node, CeEntity *entity,
                        const CeTree *visible, unsigned role) {
@@ -709,10 +719,11 @@ static bool visit_node(Binder *b, const CeTree *t, size_t depth) {
     }
     case CE_K_FunctionDefinition: {
         b->labels.len = 0; free(b->labels.slots); b->labels = (TextMap){0};
-        collect_labels(b,t->children[3]);
+        if (!b->sema->declarations_only) collect_labels(b,t->children[3]);
         for (size_t i = 0; i <= t->len; ++i) {
             if (!slot_events(b,t,i)) return false;
             if (i == t->len) break;
+            if (i == 3 && b->sema->declarations_only) continue;
             b->old_parameter_declarations = i == 2;
             bool ok = visit_child(b,t,i,depth);
             b->old_parameter_declarations = false;

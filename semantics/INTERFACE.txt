@@ -9,6 +9,7 @@ exports locate nodes by byte extents in the parsed source.
 Commands
 
   cesta bind     [--std=c11|gnu11] [--dialect=gcc|clang] PREPROCESSED-C
+  cesta bind --fields [--declarations-only] [--json-lines] --cc COMPILER COMPILER-FLAGS SOURCE
   cesta types    [--std=c11|gnu11] [--dialect=gcc|clang] [--abi=ABI] PREPROCESSED-C
   cesta probe    [...same options...] PREPROCESSED-C
   cesta explicit [...same options...] PREPROCESSED-C
@@ -18,6 +19,32 @@ Commands
 bind lists entities and every identifier occurrence that denotes one:
   (entity ID KIND NAME LINKAGE SCOPE DECLARATION-OFFSET)
   (use OFFSET ENTITY ROLE VISIBLE-DECLARATION-OFFSET [folded])
+
+The optional --fields query also elaborates the unit's types and emits:
+  (field-profile "ABI" POINTER-BYTES)
+  (field-scope unit|declarations)
+  (record-type RECORD-ID KIND TAG "C-TYPE" SIZE ALIGN ...)
+  (record-alias TYPEDEF-ID RECORD-ID "NAME" SIZE ALIGN QUALIFIERS ...)
+  (field RECORD-ID MEMBER-INDEX NAME "TYPE" BYTE-OFFSET SIZE ALIGN ...)
+  (field-use OFFSET RECORD-ID MEMBER-INDEX THROUGH-RECORD-ID KIND NAME "THROUGH-TYPE" ...)
+
+A field's identity is its declaring record and member index. THROUGH-RECORD-ID
+is the record used at the access site; it differs when an anonymous member
+promotes a nested field. KIND is dot, arrow, initializer or offsetof. These are
+syntactic references, including unevaluated ones, rather than a call-effects
+analysis. Field declarations include source positions, anonymous and bit-field
+markers, incomplete-array markers, and (references) for fields containing
+pointers, including arrays and embedded records. Unknown or excessively nested
+aggregate structure is classified conservatively as reference-bearing.
+Queries preserve macro provenance.
+Record aliases identify direct record typedefs, including typedefs of anonymous
+records. Pointer and array typedefs are not record aliases.
+With --cc the field query selects the compiler target's supported ABI unless
+--abi explicitly selects a model. Default bind remains a name-binding query.
+--declarations-only extracts file-level record layouts and function signatures
+without elaborating function bodies; its field-scope record marks this scope.
+It is an inventory query and cannot admit an ownership-checked body.
+
 types lists each entity's type, each complete record's layout, and each
 expression in tree order:
   (expr BEGIN END "TYPE" CATEGORY [(cast KIND)] (CONVERSION "TO")... [(bits N)] [(value V)] [(folded)])
@@ -44,6 +71,8 @@ bind, types and census accept --json-lines before --cc. Each line contains the
 command and one record as explicitly tagged list, symbol and text atoms.
 Valid UTF-8 uses value; other byte strings use hexadecimal bytes. Numeric
 spelling remains a symbol, so transport never changes an atom's kind.
+Binding queries stream these records directly. Field inventories and field
+references use the same producer for S-expressions and JSON lines.
 Source preprocessing adds original spelling positions and macro expansion
 chains to records. Refusals use the same original positions and expansion notes.
 

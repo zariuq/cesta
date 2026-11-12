@@ -1,5 +1,6 @@
 """Original locations, macro chains and lossless JSON analysis records."""
 
+import argparse
 import json
 import subprocess
 import tempfile
@@ -31,6 +32,10 @@ def metta(atom):
 
 
 def main():
+    global BINARY
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--cesta',type=Path,default=BINARY)
+    BINARY = parser.parse_args().cesta.resolve()
     count = 0
     with tempfile.TemporaryDirectory(dir=ROOT / "build") as directory:
         work = Path(directory)
@@ -82,13 +87,14 @@ def main():
         # as bytes instead of replacing them or emitting invalid JSON.
         unusual = work / "source-\udcff.c"
         unusual.write_text("unsigned char f(unsigned long x) { return x; }\n")
-        rows = [json.loads(line) for line in run(["types", "--json-lines", "--cc", "gcc", unusual]).stdout.splitlines()]
         def has_byte_name(atom):
             return ("bytes" in atom and b"\xff" in bytes.fromhex(atom["bytes"])) or any(
                 has_byte_name(item) for item in atom.get("items", []))
-        if not any(has_byte_name(row["record"]) for row in rows):
-            raise RuntimeError("JSON lost a non-UTF-8 source name")
-        count += 1
+        for command in ('types','bind'):
+            rows = [json.loads(line) for line in run([command, "--json-lines", "--cc", "gcc", unusual]).stdout.splitlines()]
+            if not any(has_byte_name(row["record"]) for row in rows):
+                raise RuntimeError("JSON lost a non-UTF-8 source name")
+            count += 1
     print("provenance controls:", count, "source/expanded reads, exact JSON records and located refusals")
 
 

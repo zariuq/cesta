@@ -198,6 +198,19 @@ bool ce_type_floating(const CeType *t) { return ce_type_real_floating(t) || t->k
 bool ce_type_arithmetic(const CeType *t) { return ce_type_integer(t) || ce_type_floating(t); }
 bool ce_type_scalar(const CeType *t) { return ce_type_arithmetic(t) || t->kind == CE_T_POINTER; }
 bool ce_type_record(const CeType *t) { return t->kind == CE_T_STRUCT || t->kind == CE_T_UNION; }
+
+static bool contains_pointer(const CeType *type, unsigned depth) {
+    if (!type || depth > 64) return true;
+    if (type->kind == CE_T_POINTER) return true;
+    if (type->kind == CE_T_ARRAY) return contains_pointer(type->base,depth+1);
+    if (ce_type_record(type)) {
+        if (!type->tag->record || !type->tag->record->complete) return true;
+        for (size_t i = 0; i < type->tag->record->nmembers; ++i)
+            if (contains_pointer(type->tag->record->members[i].type,depth+1)) return true;
+    }
+    return false;
+}
+bool ce_type_contains_pointer(const CeType *type) { return contains_pointer(type,0); }
 bool ce_type_void(const CeType *t) { return t->kind == CE_T_VOID; }
 
 /* An enumeration's compatible integer type (§6.7.2.2p4). */

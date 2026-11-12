@@ -1322,15 +1322,18 @@ static bool compare_values(Elab *e, unsigned k, CeType *type, const CeExpr *a, c
     }
 }
 
-static bool member_lookup(Elab *e, const CeType *record, CeText name, CeMember *out, unsigned long long base) {
+static bool member_lookup(Elab *e, const CeType *record, CeText name, CeMember *out,
+                          unsigned long long base, const CeMember **identity) {
     if (!record->tag || !record->tag->record) return false;
     CeRecord *r = record->tag->record;
     for (size_t i = 0; i < r->nmembers; ++i) {
         CeMember *m = &r->members[i];
         if (m->anonymous) {
-            if (member_lookup(e,m->type,name,out,base+m->offset)) return true;
+            if (member_lookup(e,m->type,name,out,base+m->offset,identity)) return true;
         } else if (m->name.len && ce_equal(m->name,name)) {
-            *out = *m; out->offset += base; return true;
+            *out = *m; out->offset += base;
+            if (identity) *identity = m;
+            return true;
         }
     }
     return false;
@@ -1549,14 +1552,16 @@ static bool expression(Elab *e, const CeTree *t, CeExpr **out) {
             lvalue = base->category == CE_LVALUE;
         }
         CeText name = ce_sema_name(s,t->children[1]);
-        CeMember m;
-        if (!member_lookup(e,record,name,&m,0))
+        CeMember m; const CeMember *identity = NULL;
+        if (!member_lookup(e,record,name,&m,0,&identity))
             return fail(e,t,"no member named %.*s",(int)name.len,name.data);
         unsigned q = record->qualifiers;
         CeType *type = ce_type_qualified(s,m.type,q);
         CeExpr *x = new_expr(e,t,type,lvalue ? CE_LVALUE : CE_RVALUE);
         if (m.bitfield) x->bits = m.bit_width;
         x->member = m.declaration;
+        ce_sema_field_use(s,t->children[1],identity,record,
+                          k == CE_K_PointerMember ? CE_FIELD_ARROW : CE_FIELD_DOT);
         *out = x; return true;
     }
     case CE_K_PostIncrement: case CE_K_PostDecrement: case CE_K_PreIncrement: case CE_K_PreDecrement: {
@@ -1840,16 +1845,19 @@ static bool offsetof_designator(Elab *e, CeType *record, const CeTree *d, CeType
                                 unsigned long long *offset, bool *constant) {
     switch (kind_of(e,d)) {
     case CE_K_GNUOffsetMember: {
-        CeMember m;
+        CeMember m; const CeMember *identity = NULL;
         CeText name = ce_sema_name(e->sema,d->children[0]);
-        if (!member_lookup(e,record,name,&m,0)) return fail(e,d,"no member named %.*s",(int)name.len,name.data);
+        if (!member_lookup(e,record,name,&m,0,&identity)) return fail(e,d,"no member named %.*s",(int)name.len,name.data);
+        ce_sema_field_use(e->sema,d->children[0],identity,record,CE_FIELD_OFFSETOF);
         *type = m.type; *offset = m.offset; return true;
     }
     case CE_K_GNUOffsetNestedMember: {
         CeType *inner; unsigned long long base;
         if (!offsetof_designator(e,record,d->children[0],&inner,&base,constant)) return false;
-        CeMember m; CeText name = ce_sema_name(e->sema,d->children[1]);
-        if (!member_lookup(e,inner,name,&m,0)) return fail(e,d,"no member named %.*s",(int)name.len,name.data);
+        CeMember m; const CeMember *identity = NULL;
+        CeText name = ce_sema_name(e->sema,d->children[1]);
+        if (!member_lookup(e,inner,name,&m,0,&identity)) return fail(e,d,"no member named %.*s",(int)name.len,name.data);
+        ce_sema_field_use(e->sema,d->children[1],identity,inner,CE_FIELD_OFFSETOF);
         *type = m.type; *offset = base + m.offset; return true;
     }
     case CE_K_GNUOffsetSubscript: {
@@ -2114,10 +2122,15 @@ static bool fill(Elab *e, CeType *type, Items *it, bool braced, long long *count
                     if (r->members[m].name.len && ce_equal(r->members[m].name,name)) found = m;
                     else if (r->members[m].anonymous) {
                         CeMember inner;
-                        if (member_lookup(e,r->members[m].type,name,&inner,0)) found = m;
+                        if (member_lookup(e,r->members[m].type,name,&inner,0,NULL)) found = m;
                     }
                 }
                 if (found == r->nmembers) return fail(e,item,"no member named %.*s",(int)name.len,name.data);
+                if (e->sema->track_fields) {
+                    CeMember selected; const CeMember *identity = NULL;
+                    if (member_lookup(e,type,name,&selected,0,&identity))
+                        ce_sema_field_use(e->sema,designator->children[0],identity,type,CE_FIELD_INITIALIZER);
+                }
                 position = found;
                 if (r->members[found].anonymous && !(r->members[found].name.len)) {
                     /* a designator into an anonymous member continues inside it */
@@ -2167,9 +2180,11 @@ static bool initialize_designated(Elab *e, CeType *type, const CeTree *item, siz
         const CeTree *designator = list->children[d];
         unsigned dk = kind_of(e,designator);
         if (dk == CE_K_MemberDesignator) {
-            CeMember m; CeText name = ce_sema_name(e->sema,designator->children[0]);
-            if (!ce_type_record(type) || !member_lookup(e,type,name,&m,0))
+            CeMember m; const CeMember *identity = NULL;
+            CeText name = ce_sema_name(e->sema,designator->children[0]);
+            if (!ce_type_record(type) || !member_lookup(e,type,name,&m,0,&identity))
                 return fail(e,designator,"no member named %.*s",(int)name.len,name.data);
+            ce_sema_field_use(e->sema,designator->children[0],identity,type,CE_FIELD_INITIALIZER);
             type = m.type;
             bits = m.bitfield ? m.bit_width : 0;
         } else {
@@ -2339,6 +2354,7 @@ static bool function_definition(Elab *e, const CeTree *t) {
         return fail(e,t,"conflicting types for %.*s",(int)entity->name.len,entity->name.data);
     entity->type = entity->type ? ce_type_composite(e->sema,entity->type,type) : type;
     entity->definition = t; entity->defined = true;
+    if (e->sema->declarations_only) return true;
     CeType *saved_return = e->return_type, *saved_type = e->function_type; CeEntity *saved_function = e->function;
     e->return_type = type->base; e->function = entity; e->function_type = type;
     bool ok = statement(e,t->children[3]);

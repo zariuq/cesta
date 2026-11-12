@@ -610,6 +610,11 @@ layout calculation, printing and compilation remain tested boundaries.
 
 PROOF RECORDS
 
+Cesta's build, commands, exported C and runtime have no Lean dependency.
+The C implementation checks ownership contracts itself. Lean is used only
+in explicitly invoked development proof checks about Cesta's additions;
+users need no proof assistant, proof library or proof receipt.
+
   cesta export-c source.cesta --std=c11 --plan source.plan -o source.c
 
 The ownership record includes actual allocation ranges, loan creation and end,

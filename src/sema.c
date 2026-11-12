@@ -4,7 +4,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include "sema.h"
 #include "pp.h"
+#include "records.h"
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,10 +27,11 @@ bool ce_sema_init(CeSema *sema, const CeGrammar *g, CeText source, CeError *erro
     return true;
 }
 void ce_sema_free(CeSema *sema) {
-    free(sema->kinds); free(sema->entities); free(sema->uses);
+    free(sema->kinds); free(sema->entities); free(sema->uses); free(sema->field_uses);
     ce_pointer_map_free(&sema->use_of); ce_pointer_map_free(&sema->entity_of);
     ce_pointer_map_free(&sema->tag_of); ce_pointer_map_free(&sema->exprs);
     ce_pointer_map_free(&sema->type_names); ce_pointer_map_free(&sema->extents);
+    ce_pointer_map_free(&sema->field_use_of);
     ce_arena_free(&sema->arena);
 }
 
@@ -97,6 +100,89 @@ static void json_atom(FILE *file, const CeAtom *atom) {
         fputc('}',file);
     }
 }
+
+/* Analysis records have one producer for both transports. JSON binding
+   queries write each record directly, without serializing and reparsing a
+   second complete document. */
+typedef struct {
+    FILE *file;
+    const char *command;
+    bool json;
+    bool local[8], *nonempty;
+    size_t depth, capacity;
+} RecordWriter;
+
+static void record_init(RecordWriter *w, FILE *file, bool json, const char *command) {
+    *w = (RecordWriter){.file=file,.command=command,.json=json,.capacity=8};
+    w->nonempty = w->local;
+}
+static void record_free(RecordWriter *w) { if (w->nonempty != w->local) free(w->nonempty); }
+static void record_separator(RecordWriter *w) {
+    if (!w->depth) return;
+    if (w->nonempty[w->depth-1]) fputc(w->json ? ',' : ' ',w->file);
+    w->nonempty[w->depth-1] = true;
+}
+static void record_open(RecordWriter *w) {
+    record_separator(w);
+    if (w->depth == w->capacity) {
+        size_t next = w->capacity*2;
+        if (w->nonempty == w->local) {
+            w->nonempty = ce_resize(NULL,next,sizeof(*w->nonempty));
+            memcpy(w->nonempty,w->local,sizeof(w->local));
+        } else w->nonempty = ce_resize(w->nonempty,next,sizeof(*w->nonempty));
+        w->capacity = next;
+    }
+    w->nonempty[w->depth++] = false;
+    fputs(w->json ? "{\"kind\":\"list\",\"items\":[" : "(",w->file);
+}
+static void record_close(RecordWriter *w) {
+    --w->depth;
+    fputs(w->json ? "]}" : ")",w->file);
+}
+static void record_atom(RecordWriter *w, unsigned kind, CeText text) {
+    record_separator(w);
+    if (w->json) {
+        CeAtom atom = {.kind=kind,.text=text};
+        json_atom(w->file,&atom);
+    } else if (kind == CE_ATOM_TEXT) ce_quote(w->file,text);
+    else fwrite(text.data,1,text.len,w->file);
+}
+static void record_symbol(RecordWriter *w, const char *text) { record_atom(w,CE_ATOM_SYMBOL,named(text)); }
+static void record_number(RecordWriter *w, uintmax_t number) {
+    char text[sizeof(uintmax_t)*3+1];
+    int length = snprintf(text,sizeof(text),"%" PRIuMAX,number);
+    record_atom(w,CE_ATOM_SYMBOL,(CeText){(unsigned char *)text,(size_t)length});
+}
+static void record_text(RecordWriter *w, CeText text) { record_atom(w,CE_ATOM_TEXT,text); }
+static void record_name(RecordWriter *w, CeText text) {
+    if (text.len) record_text(w,text);
+    else { record_open(w); record_close(w); }
+}
+static void record_list(RecordWriter *w, const char *head) { record_open(w); record_symbol(w,head); }
+static void record_begin(RecordWriter *w, const char *head) {
+    if (w->json) {
+        fputs("{\"command\":",w->file); json_text(w->file,named(w->command)); fputs(",\"record\":",w->file);
+    } else fputc(' ',w->file);
+    record_list(w,head);
+}
+static void record_end(RecordWriter *w) {
+    record_close(w);
+    if (w->json) fputc('}',w->file);
+    fputc('\n',w->file);
+}
+static void record_location(RecordWriter *w, size_t offset) {
+    if (!located) return;
+    const CePPOrigin *o = ce_pp_origin(located,offset);
+    if (!o) return;
+    record_list(w,"at"); record_text(w,named(o->file));
+    record_number(w,o->line); record_number(w,o->column);
+    for (const CePPExpansion *e = o->expansion; e; e = e->parent) {
+        record_list(w,"from"); record_text(w,e->macro); record_text(w,named(e->definition_file));
+        record_number(w,e->definition_line); record_text(w,named(e->file));
+        record_number(w,e->line); record_number(w,e->column); record_close(w);
+    }
+    record_close(w);
+}
 static bool json_records(CeArena *arena, CeText data, const char *command, CeError *error) {
     CeAtom *root;
     if (!ce_atom_read(arena,data,&root,error) || root->kind != CE_ATOM_LIST || !root->len)
@@ -110,42 +196,45 @@ static bool json_records(CeArena *arena, CeText data, const char *command, CeErr
 
 static void locate(FILE *file, size_t offset) {
     if (!located) return;
-    const CePPOrigin *o = ce_pp_origin(located,offset);
-    if (!o) return;
-    fputs(" (at ",file); ce_quote(file,named(o->file)); fprintf(file," %u %u",o->line,o->column);
-    for (const CePPExpansion *e = o->expansion; e; e = e->parent) {
-        fputs(" (from ",file); ce_quote(file,e->macro); fputc(' ',file);
-        ce_quote(file,named(e->definition_file)); fprintf(file," %u ",e->definition_line);
-        ce_quote(file,named(e->file)); fprintf(file," %u %u)",e->line,e->column);
-    }
-    fputc(')',file);
+    RecordWriter w; record_init(&w,file,false,NULL);
+    w.depth = 1; w.nonempty[0] = true;
+    record_location(&w,offset); record_free(&w);
 }
 
 /* (entity ID KIND NAME LINKAGE SCOPE DECLARATION-OFFSET) and
    (use OFFSET ENTITY ROLE VISIBLE-OFFSET), offsets into the parsed source. */
-bool ce_sema_bindings_export(const CeSema *sema, FILE *file) {
+static void bindings_records(const CeSema *sema, RecordWriter *w) {
     static const char *linkage[] = {"none","internal","external"};
     static const char *scope[] = {"file","block","prototype","function"};
-    fputs("(bindings\n",file);
     for (size_t i = 0; i < sema->nentities; ++i) {
         const CeEntity *e = sema->entities[i];
-        fprintf(file," (entity %zu %s ",e->id,entity_kind_name(e->kind));
-        write_name(file,e->name);
-        fprintf(file," %s %s ",linkage[e->linkage],scope[e->scope]);
-        if (e->declaration) { fprintf(file,"%zu",e->declaration->offset); locate(file,e->declaration->offset); fputs(")\n",file); }
-        else fputs("())\n",file);
+        record_begin(w,"entity"); record_number(w,e->id); record_symbol(w,entity_kind_name(e->kind));
+        record_name(w,e->name); record_symbol(w,linkage[e->linkage]); record_symbol(w,scope[e->scope]);
+        if (e->declaration) { record_number(w,e->declaration->offset); record_location(w,e->declaration->offset); }
+        else { record_open(w); record_close(w); }
+        record_end(w);
     }
     for (size_t i = 0; i < sema->nuses; ++i) {
         const CeUse *u = &sema->uses[i];
-        fprintf(file," (use %zu %zu %s ",u->node->offset,u->entity->id,role_name(u->role));
-        if (u->visible) fprintf(file,"%zu",u->visible->offset); else fputs("()",file);
-        if (u->folded) fputs(" folded",file);
-        locate(file,u->node->offset);
-        fputs(")\n",file);
+        record_begin(w,"use"); record_number(w,u->node->offset); record_number(w,u->entity->id);
+        record_symbol(w,role_name(u->role));
+        if (u->visible) record_number(w,u->visible->offset);
+        else { record_open(w); record_close(w); }
+        if (u->folded) record_symbol(w,"folded");
+        record_location(w,u->node->offset); record_end(w);
     }
-    fputs(")\n",file);
+}
+
+static bool bindings_export(const CeSema *sema, FILE *file, bool json) {
+    RecordWriter w; record_init(&w,file,json,"bind");
+    if (!json) fputs("(bindings\n",file);
+    bindings_records(sema,&w);
+    if (!json) fputs(")\n",file);
+    record_free(&w);
     return !ferror(file);
 }
+
+bool ce_sema_bindings_export(const CeSema *sema, FILE *file) { return bindings_export(sema,file,false); }
 
 /* ---- source extents --------------------------------------------------------
 
@@ -260,6 +349,94 @@ static void write_type(CeSema *sema, FILE *file, const CeType *t) {
     CeText quoted = {(unsigned char *)text,strlen(text)};
     ce_quote(file,quoted); free(text);
 }
+
+typedef struct { const CeEntity *owner; size_t index; } FieldIdentity;
+
+static void record_type(RecordWriter *w, CeSema *sema, const CeType *type) {
+    char *text = ce_type_text(sema,type,CE_PRINT_ANYWAY);
+    record_text(w,named(text)); free(text);
+}
+
+static bool field_bindings_export(CeSema *sema, FILE *file, bool json, CeError *error) {
+    CePointerMap identities = {0};
+    RecordWriter w; record_init(&w,file,json,"bind");
+    if (!json) fputs("(bindings\n",file);
+    bindings_records(sema,&w);
+    record_begin(&w,"field-profile"); record_text(&w,named(sema->abi->name));
+    record_number(&w,sema->abi->size[CE_T_POINTER]); record_end(&w);
+    record_begin(&w,"field-scope");
+    record_symbol(&w,sema->declarations_only ? "declarations" : "unit"); record_end(&w);
+    for (size_t i = 0; i < sema->nentities; ++i) {
+        const CeEntity *owner = sema->entities[i];
+        if (!owner->record || !owner->record->complete ||
+            (owner->kind != CE_ENTITY_STRUCT && owner->kind != CE_ENTITY_UNION)) continue;
+        CeType type = {.kind=owner->kind == CE_ENTITY_UNION ? CE_T_UNION : CE_T_STRUCT,.tag=(CeEntity *)owner};
+        record_begin(&w,"record-type"); record_number(&w,owner->id);
+        record_symbol(&w,owner->kind == CE_ENTITY_UNION ? "union" : "struct");
+        record_name(&w,owner->name); record_type(&w,sema,&type);
+        record_number(&w,owner->record->size); record_number(&w,owner->record->align);
+        if (owner->definition) record_location(&w,owner->definition->offset);
+        record_end(&w);
+        for (size_t j = 0; j < owner->record->nmembers; ++j) {
+            const CeMember *member = &owner->record->members[j];
+            FieldIdentity *identity = ce_alloc(&sema->arena,sizeof(*identity));
+            *identity = (FieldIdentity){owner,j};
+            ce_pointer_put(&identities,member,identity);
+            record_begin(&w,"field"); record_number(&w,owner->id); record_number(&w,j);
+            record_name(&w,member->name); record_type(&w,sema,member->type);
+            record_number(&w,member->offset); record_number(&w,ce_type_size(sema,member->type));
+            record_number(&w,ce_type_align(sema,member->type));
+            if (ce_type_contains_pointer(member->type)) {
+                record_list(&w,"references"); record_close(&w);
+            }
+            if (member->anonymous) { record_list(&w,"anonymous"); record_close(&w); }
+            if (member->bitfield) {
+                record_list(&w,"bits"); record_number(&w,member->bit_offset);
+                record_number(&w,member->bit_width); record_close(&w);
+            }
+            if (member->type->kind == CE_T_ARRAY && member->type->length < 0) {
+                record_list(&w,"incomplete-array"); record_close(&w);
+            }
+            if (member->declaration) {
+                record_list(&w,"decl"); record_number(&w,member->declaration->offset);
+                record_location(&w,member->declaration->offset); record_close(&w);
+            }
+            record_end(&w);
+        }
+    }
+    for (size_t i = 0; i < sema->nentities; ++i) {
+        const CeEntity *alias = sema->entities[i];
+        if (alias->kind != CE_ENTITY_TYPEDEF || !alias->type || !ce_type_record(alias->type)) continue;
+        record_begin(&w,"record-alias"); record_number(&w,alias->id);
+        record_number(&w,alias->type->tag->id); record_text(&w,alias->name);
+        record_number(&w,ce_type_size(sema,alias->type)); record_number(&w,ce_type_align(sema,alias->type));
+        record_number(&w,alias->type->qualifiers);
+        if (alias->declaration) record_location(&w,alias->declaration->offset);
+        record_end(&w);
+    }
+    static const char *kinds[] = {"dot","arrow","initializer","offsetof"};
+    for (size_t i = 0; i < sema->nfield_uses; ++i) {
+        const CeFieldUse *use = &sema->field_uses[i];
+        const FieldIdentity *identity = ce_pointer_get(&identities,use->member);
+        if (!identity) {
+            record_free(&w); ce_pointer_map_free(&identities);
+            return ce_error(error,use->node->offset,"field reference has no declaring record");
+        }
+        const Extent *span = extent_of(sema,use->node);
+        record_begin(&w,"field-use"); record_number(&w,span ? span->begin : use->node->offset);
+        record_number(&w,identity->owner->id); record_number(&w,identity->index);
+        record_number(&w,use->through->tag->id); record_symbol(&w,use->kind < 4 ? kinds[use->kind] : "unknown");
+        record_name(&w,use->member->name); record_type(&w,sema,use->through);
+        if (span) { record_list(&w,"end"); record_number(&w,span->end); record_close(&w); }
+        record_location(&w,span ? span->begin : use->node->offset);
+        record_end(&w);
+    }
+    ce_pointer_map_free(&identities);
+    if (!json) fputs(")\n",file);
+    record_free(&w);
+    return !ferror(file);
+}
+
 /* (expr BEGIN END "TYPE" CATEGORY (KIND "TO")... [bits N] [value V]) in tree order. */
 static void types_walk(CeSema *sema, const CeTree *t, FILE *file) {
     const CeExpr *x = ce_sema_expr(sema,t);
@@ -759,7 +936,10 @@ int ce_sema_command(int argc, char **argv) {
     CeArena arena = {0}; CeGrammar g = {0}; CeError error = {{0},0};
     CeTokens tokens = {0}; CeForest forest = {.root=-1}; CeDFA dfa = {0}; CeLR lr = {0};
     CeText source = {NULL,0}; CeSema sema = {0}; bool sema_ready = false;
-    bool gnu = true, clang = false, dialect_given = false, json_lines = false;
+    bool gnu = true, clang = false, dialect_given = false, json_lines = false, fields = false, abi_given = false;
+    bool declarations_only = false;
+    bool visitors = !strcmp(argv[1],"record-visitor");
+    const char *schema_path = NULL, *output_path = NULL, *facts_path = NULL;
     int result = 1; const char *path = NULL;
     char *records = NULL; size_t records_len = 0; FILE *record_file = NULL;
     const CeAbi *abi = &ce_abi_x86_64_sysv;
@@ -771,15 +951,33 @@ int ce_sema_command(int argc, char **argv) {
         if (!strcmp(argv[i],"--cc")) { compiler_at = i; break; }
         if (!strcmp(argv[i],"--std=c11")) gnu = false;
         else if (!strcmp(argv[i],"--json-lines")) json_lines = true;
+        else if (!strcmp(argv[i],"--fields")) fields = true;
+        else if (!strcmp(argv[i],"--declarations-only")) declarations_only = true;
+        else if ((!strcmp(argv[i],"--schema") || !strcmp(argv[i],"-o") || !strcmp(argv[i],"--facts")) && i+1 < argc) {
+            const char *option = argv[i++];
+            if (!strcmp(option,"--schema")) schema_path = argv[i];
+            else if (!strcmp(option,"-o")) output_path = argv[i];
+            else facts_path = argv[i];
+        }
         else if (!strcmp(argv[i],"--std=gnu11")) gnu = true;
         else if (!strcmp(argv[i],"--dialect=clang")) { clang = true; dialect_given = true; }
         else if (!strcmp(argv[i],"--dialect=gcc")) { clang = false; dialect_given = true; }
         else if (!strncmp(argv[i],"--mutate=",9)) explicit_mutation = strtoul(argv[i]+9,NULL,10);
         else if (!strncmp(argv[i],"--abi=",6)) {
             if (!(abi = ce_abi_named(argv[i]+6))) { fprintf(stderr,"cesta %s: unknown ABI %s\n",argv[1],argv[i]+6); return 2; }
+            abi_given = true;
         }
         else if (!path && argv[i][0] != '-') path = argv[i];
         else { fprintf(stderr,"cesta %s: unknown argument %s\n",argv[1],argv[i]); return 2; }
+    }
+    if ((visitors && !schema_path) || (!visitors && (schema_path || output_path || facts_path))) {
+        fprintf(stderr,"cesta %s: --schema and optional -o/--facts belong to record-visitor\n",argv[1]); return 2;
+    }
+    if (declarations_only && !visitors && (!fields || strcmp(argv[1],"bind"))) {
+        fprintf(stderr,"cesta %s: --declarations-only requires bind --fields\n",argv[1]); return 2;
+    }
+    if (fields && strcmp(argv[1],"bind")) {
+        fprintf(stderr,"cesta %s: --fields applies to bind\n",argv[1]); return 2;
     }
     if (json_lines && strcmp(argv[1],"bind") && strcmp(argv[1],"types") && strcmp(argv[1],"census")) {
         fprintf(stderr,"cesta %s: --json-lines applies to bind, types and census\n",argv[1]); return 2;
@@ -795,6 +993,10 @@ int ce_sema_command(int argc, char **argv) {
         }
         have_preprocessed = true; located = &preprocessed;
         if (!dialect_given) clang = preprocessed.clang;
+        if ((fields || visitors) && !abi_given) {
+            abi = ce_abi_predefined((const char *)preprocessed.predefined.data);
+            if (!abi) { ce_error(&error,0,"field queries have no ABI model for the selected compiler target"); goto done; }
+        }
         path = "<preprocessed>";
     }
     if (!path) { fprintf(stderr,"usage: cesta %s [--std=c11|gnu11] [--dialect=gcc|clang] PREPROCESSED-C\n"
@@ -807,14 +1009,37 @@ int ce_sema_command(int argc, char **argv) {
         !ce_tree_from_forest(&g,&forest,&tokens,&arena,&tree,&error)) goto done;
     if (!ce_sema_init(&sema,&g,source,&error)) goto done;
     sema.clang = clang; sema.abi = abi;
+    sema.track_fields = fields;
+    sema.declarations_only = declarations_only || visitors;
     sema_ready = true;
     if (!ce_bind(&sema,tree,&error)) goto done;
-    if (json_lines) {
+    if (fields && ((!declarations_only && !ce_sema_extents(&sema,tree,&tokens,&error)) || !ce_elaborate(&sema,tree,&error))) goto done;
+    if (visitors) {
+        if (!ce_elaborate(&sema,tree,&error)) goto done;
+        const char *input_path = compiler_at >= 0 ? argv[argc-1] : path;
+        if ((output_path && (ce_same_file(output_path,input_path) || ce_same_file(output_path,schema_path))) ||
+            (facts_path && (ce_same_file(facts_path,input_path) || ce_same_file(facts_path,schema_path) ||
+                            (output_path && ce_same_file(output_path,facts_path))))) {
+            fprintf(stderr,"cesta record-visitor: output must not overwrite an input or the other output\n"); goto done;
+        }
+        CeRecordVisitors generated;
+        if (!ce_record_visitors(&arena,&sema,schema_path,&generated,&error) ||
+            (facts_path && !ce_record_output(facts_path,generated.facts,&error)) ||
+            (output_path && !ce_record_output(output_path,generated.code,&error))) {
+            if (error.message[0]) fprintf(stderr,"%s\n",error.message);
+            error.message[0] = 0; goto done;
+        }
+        if (!output_path && fwrite(generated.code.data,1,generated.code.len,stdout) != generated.code.len) goto done;
+        result = ferror(stdout) ? 1 : 0; goto done;
+    }
+    if (json_lines && strcmp(argv[1],"bind")) {
         record_file = open_memstream(&records,&records_len);
         if (!record_file) { ce_error(&error,0,"cannot open analysis record stream"); goto done; }
     }
     FILE *output = record_file ? record_file : stdout;
-    if (!strcmp(argv[1],"bind")) { if (!ce_sema_bindings_export(&sema,output)) goto done; }
+    if (!strcmp(argv[1],"bind")) {
+        if (!(fields ? field_bindings_export(&sema,output,json_lines,&error) : bindings_export(&sema,output,json_lines))) goto done;
+    }
     else {
         if (!ce_sema_extents(&sema,tree,&tokens,&error) || !ce_elaborate(&sema,tree,&error)) goto done;
         bool ok = !strcmp(argv[1],"types") ? types_export(&sema,tree,output) :

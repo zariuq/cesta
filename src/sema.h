@@ -193,6 +193,16 @@ typedef struct {
     bool folded;                  /* inside an array size or array designator */
 } CeUse;
 
+/* Member references retain the resolved declaration, including promotion
+   through anonymous records. These are collected only for field queries. */
+enum { CE_FIELD_DOT, CE_FIELD_ARROW, CE_FIELD_INITIALIZER, CE_FIELD_OFFSETOF };
+typedef struct {
+    const CeTree *node;
+    const CeMember *member;
+    CeType *through;
+    unsigned kind;
+} CeFieldUse;
+
 typedef struct CeSema {
     CeArena arena;
     const CeGrammar *grammar;
@@ -213,8 +223,16 @@ typedef struct CeSema {
     CePointerMap type_names;      /* TypeName node -> CeType */
     CeType *va_list_type;
     CePointerMap extents;         /* node -> source byte extent */
+    bool track_fields;
+    bool declarations_only;       /* field inventory, never body admission */
+    CeFieldUse *field_uses;
+    size_t nfield_uses, field_use_capacity;
+    CePointerMap field_use_of;    /* name token -> field-use index+1 */
     size_t unnamed;               /* conversions whose type has no C name */
 } CeSema;
+
+void ce_sema_field_use(CeSema *sema, const CeTree *node, const CeMember *member,
+                       CeType *through, unsigned kind);
 
 /* ---- elaboration (elaborate.c) ------------------------------------------- */
 
@@ -280,6 +298,7 @@ bool ce_type_floating(const CeType *t);
 bool ce_type_arithmetic(const CeType *t);
 bool ce_type_scalar(const CeType *t);
 bool ce_type_record(const CeType *t);
+bool ce_type_contains_pointer(const CeType *t);
 bool ce_type_void(const CeType *t);
 unsigned ce_type_integer_kind(const CeType *t);
 bool ce_kind_signed(const CeAbi *abi, unsigned kind);

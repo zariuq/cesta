@@ -22,6 +22,8 @@ test-source-driver test-type-admission test-unicode-names test-whole-program-tre
 
 # Gates that read external corpora or build Lean belong only to qualify.
 QUALIFICATION_ONLY = """
+qualify-cetta-record-visitors
+qualify-bundled-bootstrap
 test-compiler-sanitizers
 test-ownership-control-flow-admission
 test-ownership-refinement-admission test-ownership-callback-interfaces-admission
@@ -58,6 +60,21 @@ def main():
     assert not orphans, f"gates outside every tier: {orphans}"
     heavy = sorted(check & set(QUALIFICATION_ONLY)) + sorted(test & set(QUALIFICATION_ONLY))
     assert not heavy, f"corpus or Lean gates outside qualify: {heavy}"
+    dependencies = {}
+    for line in database.splitlines():
+        found = re.match(r'^([^\s:#=]+):(?:\s+(.*))?$', line)
+        if found:
+            dependencies.setdefault(found[1], set()).update((found[2] or '').split())
+    for root in ('all', 'check', 'test'):
+        pending, reached = [root], set()
+        while pending:
+            target = pending.pop()
+            if target in reached:
+                continue
+            reached.add(target)
+            pending.extend(dependencies.get(target, ()))
+        forbidden = sorted(reached & set(QUALIFICATION_ONLY))
+        assert not forbidden, f'{root} transitively requires developer qualification: {forbidden}'
     undefined = sorted(qualify - targets)
     assert not undefined, f"tiers name undefined gates: {undefined}"
     print(f"test tiers: check {len(check)}, test {len(test)}, qualify {len(qualify)} gates; "

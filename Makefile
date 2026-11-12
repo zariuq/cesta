@@ -16,6 +16,30 @@ all: build/cesta
 test-formatting:
 	python3 -B tests/formatting.py
 
+.PHONY: test-field-references
+test-field-references: build/cesta
+	python3 -B tests/field_references.py
+
+.PHONY: test-user-standalone
+test-user-standalone: build/cesta
+	python3 -B tests/user_standalone.py
+
+.PHONY: test-region-debug
+test-region-debug:
+	python3 -B tests/region_debug.py
+
+.PHONY: test-record-visitors
+test-record-visitors: build/cesta
+	python3 -B tests/record_visitors.py
+
+.PHONY: qualify-cetta-record-visitors
+qualify-cetta-record-visitors: build/cesta
+	python3 -B adapters/cetta/run.py $(CETTA_RECORD_FLAGS)
+
+.PHONY: qualify-bundled-bootstrap
+qualify-bundled-bootstrap:
+	python3 -B tests/user_standalone.py --bootstrap-only
+
 # Independent artifact qualification; no HOL dependency in ordinary tiers.
 .PHONY: qualify-hol-copy
 qualify-hol-copy: build/cesta
@@ -52,8 +76,8 @@ build/CPPGNU.cf: build/cesta-bootstrap grammar/CPreprocessing.module grammar/GNU
 build/language-data.c: build/embed build/C11.cf build/CGNU.cf build/CPPGNU.cf grammar/TheoryModule.cf grammar/C11.profile grammar/CGNU.profile grammar/CGNUC11.profile grammar/CClang.profile grammar/CClangC11.profile presentations/CompactC.module presentations/CompactC2.module presentations/CMeraStyle.module
 	./build/embed C11Grammar build/C11.cf CGNUGrammar build/CGNU.cf CPPGNUGrammar build/CPPGNU.cf TheoryModuleSyntax grammar/TheoryModule.cf C11Profile grammar/C11.profile CGNUProfile grammar/CGNU.profile CGNUC11Profile grammar/CGNUC11.profile CClangProfile grammar/CClang.profile CClangC11Profile grammar/CClangC11.profile CompactCModule presentations/CompactC.module CompactC2Module presentations/CompactC2.module CMeraStyleModule presentations/CMeraStyle.module > $@
 
-build/cesta: $(SOURCES) src/cesta.h src/sema.h src/pp.h src/native.h src/macro.h src/export.h src/layout.h src/operation.h src/table.h src/protocol.h src/diagnose.h src/project.h src/checked.h src/ownership.h src/ownership_signature.h src/link.h src/link.c src/ownership_signature.c src/ownership.c src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/ownership_signature.c src/link.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/source.c src/pp.c build/language-data.c -o $@
+build/cesta: $(SOURCES) src/cesta.h src/sema.h src/records.h src/pp.h src/native.h src/macro.h src/export.h src/layout.h src/operation.h src/table.h src/protocol.h src/diagnose.h src/project.h src/checked.h src/ownership.h src/ownership_signature.h src/link.h src/link.c src/ownership_signature.c src/ownership.c src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/records.c src/source.c src/pp.c build/language-data.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN) -Isrc -DCE_BUILTIN_LANGUAGES $(SOURCES) src/driver.c src/diagnose.c src/project.c src/checked.c src/ownership.c src/ownership_signature.c src/link.c src/view_driver.c src/native.c src/macro.c src/export.c src/layout.c src/operation.c src/table.c src/protocol.c src/sema.c src/records.c src/source.c src/pp.c build/language-data.c -o $@
 
 build/test-foundation: tests/foundation.c $(LIBSOURCES) src/cesta.h
 	mkdir -p build
@@ -546,7 +570,7 @@ TEST_GATES := $(CHECK_GATES) test-c test-modules test-semantics test-compiler-bu
 	test-ownership-control-flow \
 	test-checked-imports test-checked-flat-spans test-checked-foreign-abi test-checked-operations test-ownership-record-results test-ownership-record-values test-ownership-whole-views test-ownership-callbacks test-ownership-interfaces test-ownership-link test-ownership-refinement test-ownership-callback-interfaces test-ownership-abi \
 	test-native-authoring test-one-language test-project-build test-macro-engine test-macro-native-names test-macro-types test-macro-narrowing \
-	test-macro-worklists test-macro-records test-macro-sizes test-macro-probes test-provenance-core test-c-printer test-examples \
+	test-macro-worklists test-macro-records test-macro-sizes test-macro-probes test-provenance-core test-field-references test-record-visitors test-user-standalone test-region-debug test-c-printer test-examples \
 	test-compact-examples test-grammar-trees test-whole-program-trees test-presentation-driver \
 	test-presentation-semantics test-build-dependencies
 QUALIFY_GATES := $(TEST_GATES) test-compiler-sanitizers test-corpora test-c11parser test-lean test-macro-admission \

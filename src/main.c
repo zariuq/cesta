@@ -49,7 +49,8 @@ int main(int argc, char **argv) {
     if (argc > 1 && (!strcmp(argv[1],"view") || !strcmp(argv[1],"convert") || !strcmp(argv[1],"export-view-rules")))
         return ce_view_command(argc,argv);
     if (argc > 1 && (!strcmp(argv[1],"bind") || !strcmp(argv[1],"types") || !strcmp(argv[1],"probe") ||
-                     !strcmp(argv[1],"explicit") || !strcmp(argv[1],"census") || !strcmp(argv[1],"abi-tables")))
+                     !strcmp(argv[1],"explicit") || !strcmp(argv[1],"census") || !strcmp(argv[1],"abi-tables") ||
+                     !strcmp(argv[1],"record-visitor")))
         return ce_sema_command(argc,argv);
     if (argc > 1 && (!strcmp(argv[1],"source") || !strcmp(argv[1],"source-bytes")))
         return ce_pp_source_command(argc,argv,ce_builtin_CPPGNUGrammar());
@@ -106,6 +107,8 @@ int main(int argc, char **argv) {
               "       cesta write [--std=c11|gnu11] SEXP\n"
               "       cesta bind|types|probe|explicit|census [--std=c11|gnu11] [--dialect=gcc|clang] [--abi=ABI] PREPROCESSED-C\n"
               "       cesta bind|types|census --json-lines --cc COMPILER COMPILER-FLAGS SOURCE\n"
+              "       cesta bind --fields [--declarations-only] [--json-lines] --cc COMPILER COMPILER-FLAGS SOURCE\n"
+              "       cesta record-visitor --schema CONTRACT [-o C] [--facts DATA] --cc COMPILER COMPILER-FLAGS SOURCE\n"
               "       cesta abi-tables [--abi=ABI]\n"
               "       cesta check-module MODULE\n"
               "       cesta module-grammar MODULE THEORY\n"
