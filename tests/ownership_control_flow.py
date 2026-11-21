@@ -51,7 +51,7 @@ POSITIVE = {
 NEGATIVE = {
     'continue_reads_released': (HEAP+'void f(int*p){do{dispose(p);continue;}while(*p);}', ALLOCATOR+' (function f (owns 0 heap))', 'moved'),
     'repeat_double_release': (HEAP+'void f(int*p,int n){do{dispose(p);}while(n);}', ALLOCATOR+' (function f (owns 0 heap))', 'moved'),
-    'continue_uninitialized_test': ('int f(int n){int x;do{if(n)continue;x=1;}while(x);return 0;}', '', 'disagree'),
+    'continue_uninitialized_test': ('int f(int n){int x;do{if(n)continue;x=1;}while(x);return 0;}', '', 'uninitialized'),
     'condition_null': ('int f(void){int*p=0;do{}while(*p);return 0;}', '', 'null'),
     'do_dangling_field': ('const int*f(const int*p){const int*q=p;do{int n=7;q=&n;}while(0);return q;}', '(function f (returns-borrow 0))', 'outlives'),
     'goto_leak': (HEAP+'void f(int*p){goto out;dispose(p);out:return;}', ALLOCATOR+' (function f (owns 0 heap))', 'without release'),

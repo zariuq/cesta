@@ -1,0 +1,11 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership
+      (check-all)
+      (allocator heap (malloc calloc) free
+        (obligation "malloc and calloc give fresh storage of the requested extent or null; free releases one allocation once and accepts null."))
+      (foreign memset (buffer 0) (returns-borrow 0) (obligation "Writes the byte c to the first n bytes of the buffer, which holds them; retains no pointer."))
+      (foreign memcmp (buffer 0) (buffer 1) (obligation "Reads the first n bytes of both buffers, which hold them; retains no pointer."))
+      (function empty_table (returns-own heap nullable))
+      (record Table (field cells (owns heap nullable) (count used))))
+    (include "dynamic_accepted.c")))

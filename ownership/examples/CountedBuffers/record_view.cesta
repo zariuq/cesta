@@ -1,0 +1,7 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (record Table (field cells (owns heap nullable) (count used)))
+      (record Window (field cells (borrow read nullable) (count n)))
+      (function window (returns-record ((cells) (borrow 0 cells)))))
+    (include "record_view.c")))

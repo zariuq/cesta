@@ -82,7 +82,7 @@ REFERENCE = r'''
 #define PUSH(E,C,allocator,buffer,length,capacity,value) __extension__ ({ \
     void *(*saved_allocator)(void *,C)=(allocator); E **saved_buffer=&(buffer); \
     C *saved_length=&(length); C *saved_capacity=&(capacity); E saved_value=(value); \
-    __extension__ ({ C next_capacity; C bytes; E *replacement; int accepted=1; \
+    __extension__ ({ C next_capacity; C bytes=0; E *replacement; int accepted=1; \
       if(saved_length==saved_capacity || *saved_length>*saved_capacity || \
          (*saved_capacity && !*saved_buffer)) accepted=0; \
       if(accepted && *saved_length==*saved_capacity) { \

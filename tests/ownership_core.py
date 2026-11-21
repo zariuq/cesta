@@ -47,6 +47,88 @@ POSITIVE = {
     "owned_global": ("static int n; void inc(int *p) { ++*p; } int f(void) { inc(&n); return n; }", "(global n f)"),
     "constant_global": ("static const int answer=42; int f(void) { return answer; }", ""),
     "native_preserves_pointer": ("extern void touch(int **out); int f(int *p) { touch(&p); return *p; }", '(foreign touch (preserves 0) (obligation "Preserves the stored pointer and its lifetime."))'),
+    "typed_foreign_opaque_record": ("typedef struct NativeStream {int *private_state;} NativeStream; extern int native_step(NativeStream *); int f(NativeStream *stream) { return native_step(stream); }", '(foreign native_step (obligation "Advances the typed native stream without exposing or retaining its private representation."))'),
+    "checked_opaque_forwarding": ("typedef struct NativeStream {int *private_state;} NativeStream; extern int native_step(NativeStream *); int relay(NativeStream *stream,int depth) { return depth ? relay(stream,depth-1) : native_step(stream); }", '(foreign native_step (opaque 0) (obligation "Advances the typed native stream without exposing or retaining its private representation.")) (function relay (opaque 0))'),
+    "shallow_record_forwarding": (
+        "typedef struct { int *state; } Handle; extern int native_step(Handle *); "
+        "static int relay(Handle *handle) { return native_step(handle); }",
+        "(record Handle (field state (borrow write))) "
+        "(foreign native_step (shallow 0) (obligation \"Uses only the handle storage and retains no pointer.\")) "
+        "(function relay (shallow 0))"),
+    "owning_field_update_then_scalar": (
+        "#include <stdlib.h>\ntypedef struct { int *data; int flag; } Box; "
+        "static void update(Box *b) { if (b->data) { b->flag=1; return; } "
+        "b->data=malloc(sizeof *b->data); b->flag=1; } "
+        "static int use(void) { Box b={0}; update(&b); int flag=b.flag; free(b.data); return flag; }",
+        "(allocator heap malloc free (obligation \"malloc/free\")) "
+        "(record Box (field data (owns heap nullable))) (function update (updates-field 0 data))"),
+    "updates_nested_pointee": (
+        "#include <stdlib.h>\ntypedef struct { int *data; } Inner; "
+        "typedef struct { Inner *inner; } Outer; "
+        "static void update(void *context) { Outer *o=context; "
+        "if (o->inner->data) return; o->inner->data=malloc(sizeof *o->inner->data); } "
+        "static int use(void) { Inner i={0}; Outer o={&i}; update(&o); free(o.inner->data); return 0; }",
+        "(allocator heap malloc free (obligation \"malloc/free\")) "
+        "(record Inner (field data (owns heap nullable))) "
+        "(record Outer (field inner (borrow write) (pointee))) "
+        "(function update (context 0 Outer) (updates-pointee 0 inner))"),
+    "preserves_nested_pointee": (
+        "typedef struct { const int *view; } Inner; typedef struct { Inner *inner; } Outer; "
+        "static int inspect(void *context) { Outer *o=context; return o->inner->view ? *o->inner->view : 0; } "
+        "static int use(void) { int n=7; Inner i={&n}; Outer o={&i}; return inspect(&o); }",
+        "(record Inner (field view (borrow read nullable))) "
+        "(record Outer (field inner (borrow write) (pointee))) "
+        "(function inspect (context 0 Outer) (pointee 0 inner) "
+        "(preserves-field 0 (inner view)))"),
+    "stores_null_field": (
+        "typedef struct { const int *view; } Holder; "
+        "static void clear(Holder *h) { h->view=0; } "
+        "static int use(void) { int n=3; Holder h={&n}; clear(&h); return h.view != 0; }",
+        "(record Holder (field view (borrow read nullable))) "
+        "(function clear (stores-field 0 view null))"),
+    "framed_parameter_before_field_post": (
+        "typedef struct { const int *view; } Holder; typedef struct { int a,b,c; } Extra; "
+        "static int publish(Holder *h, const int *source, const Extra *extra) { "
+        "h->view=source; return extra->a+extra->c; } "
+        "static int use(void) { int n=7; Holder h={0}; Extra x={1,2,3}; "
+        "int sum=publish(&h,&n,&x); return sum+(h.view ? *h.view : 0); }",
+        "(record Holder (field view (borrow read nullable))) "
+        "(function publish (stores-field 0 view 1))"),
+    "updates_whole_record": (
+        "#include <stdlib.h>\ntypedef struct { int *a; int *b; } PairOwners; "
+        "static void renew(PairOwners *p) { free(p->a); p->a=malloc(sizeof *p->a); "
+        "free(p->b); p->b=malloc(sizeof *p->b); } "
+        "static int use(void) { PairOwners p={0}; renew(&p); free(p.a); free(p.b); return 0; }",
+        "(allocator heap malloc free (obligation \"malloc/free\")) "
+        "(record PairOwners (field a (owns heap nullable)) (field b (owns heap nullable))) "
+        "(function renew (updates-record 0))"),
+    "opaque_callback_context": ("typedef struct {void *context;int (*step)(void *);} NativeOps; int run(const NativeOps *ops) {return ops->step(ops->context);}", '(callback NativeStep (field NativeOps step) (opaque 0)) (record NativeOps (field context (opaque)) (field step (callback NativeStep)))'),
+    "opaque_cursor_callbacks": (
+        "typedef struct { void *store; int (*open)(void *, void **); "
+        "int (*next)(void *); void (*close)(void *); } CursorOps;\n"
+        "static int run(const CursorOps *ops) {\n"
+        "  void *cursor=0;\n"
+        "  if (!ops->open(ops->store,&cursor)) return 0;\n"
+        "  int value=ops->next(cursor);\n"
+        "  ops->close(cursor);\n"
+        "  return value;\n}",
+        "(callback CursorOpen (field CursorOps open) (opaque 0) (stores 1 0)) "
+        "(callback CursorNext (field CursorOps next) (opaque 0)) "
+        "(callback CursorClose (field CursorOps close) (opaque 0)) "
+        "(record CursorOps (field store (opaque)) (field open (callback CursorOpen)) "
+        "(field next (callback CursorNext)) (field close (callback CursorClose)))"),
+    "variadic_whole_buffer": ("typedef struct {const int *data;unsigned n;} Ints; extern void inspect(int tag,...); void f(const Ints *v) {if(!v->data)return;inspect(0,v->data);}", '(record Ints (field data (borrow read nullable) (count n))) (foreign inspect (variadic-read) (obligation "Reads each typed pointer argument without retaining it."))'),
+    "nullable_whole_buffer": (
+        "#include <stddef.h>\nstatic int first(const int *p,size_t n) { "
+        "if (!p) return n ? 99 : 0; return p[0]; } "
+        "int f(void) { int a[1]={7}; return first(0,0)+first(a,1); }",
+        "(function first (buffer 0) (nullable 0))"),
+    "nullable_counted_field_call": (
+        "#include <stddef.h>\ntypedef struct { const int *data; size_t n; } Window; "
+        "static int total(const Window *w) { int sum=0; "
+        "for (size_t i=0;i<w->n;++i) sum+=w->data[i]; return sum; } "
+        "int f(const Window *w) { return total(w); }",
+        "(record Window (field data (borrow read nullable) (count n)))"),
 }
 
 NEGATIVE = {
@@ -95,6 +177,52 @@ NEGATIVE = {
     "conflicting_result": ('const int *f(const int *p) { return p; }', '(function f (returns-borrow 0) (returns-static))', "conflicting"),
     "nonpointer_result": ('int f(void) { return 3; }', '(function f (returns-static))', "non-pointer"),
     "conflicting_store": ('void f(const char **p) { *p="a"; }', '(function f (stores 0 static) (preserves 0))', "conflicting"),
+    "source_defined_opaque_record": ("typedef struct NativeStream {int *private_state;} NativeStream; int native_step(NativeStream *stream) { return stream->private_state != 0; }", '(foreign native_step (obligation "A native stream operation."))', "defined function must be checked"),
+    "opaque_representation_access": ("typedef struct NativeStream {int *private_state;} NativeStream; int inspect(NativeStream *stream) { return stream->private_state != 0; }", '(function inspect (opaque 0))', "representation is private"),
+    "opaque_origin_laundered": ("typedef struct NativeStream {int *private_state;} NativeStream; static int ordinary(NativeStream *stream) {(void)stream;return 0;} int inspect(NativeStream *stream) { return ordinary(stream); }", '(function inspect (opaque 0))', "retain its typed boundary"),
+    "opaque_callback_context_exposed": ("typedef struct {void *context;int (*step)(void *);} NativeOps; int run(const NativeOps *ops) {return *(int *)ops->context;}", '(callback NativeStep (field NativeOps step) (opaque 0)) (record NativeOps (field context (opaque)) (field step (callback NativeStep)))', "opaque native handle"),
+    "shallow_record_follows_field": (
+        "typedef struct { int *state; } Handle; static int inspect(Handle *handle) { return *handle->state; }",
+        "(record Handle (field state (borrow write))) (function inspect (shallow 0))",
+        "uninitialized"),
+    "owning_field_update_leaks": (
+        "#include <stdlib.h>\ntypedef struct { int *data; } Box; "
+        "static void update(Box *b) { if (b->data) return; b->data=malloc(sizeof *b->data); } "
+        "static int use(void) { Box b={0}; update(&b); return b.data != 0; }",
+        "(allocator heap malloc free (obligation \"malloc/free\")) "
+        "(record Box (field data (owns heap nullable))) (function update (updates-field 0 data))",
+        "unreleased owning field"),
+    "updates_nested_pointee_leaks": (
+        "#include <stdlib.h>\ntypedef struct { int *data; } Inner; "
+        "typedef struct { Inner *inner; } Outer; "
+        "static void update(void *context) { Outer *o=context; "
+        "if (o->inner->data) return; o->inner->data=malloc(sizeof *o->inner->data); } "
+        "static int use(void) { Inner i={0}; Outer o={&i}; update(&o); return o.inner->data != 0; }",
+        "(allocator heap malloc free (obligation \"malloc/free\")) "
+        "(record Inner (field data (owns heap nullable))) "
+        "(record Outer (field inner (borrow write) (pointee))) "
+        "(function update (context 0 Outer) (updates-pointee 0 inner))",
+        "unreleased owning field"),
+    "stores_null_nonnullable_field": (
+        "typedef struct { const int *view; } Holder; static void clear(Holder *h) { h->view=0; }",
+        "(record Holder (field view (borrow read))) (function clear (stores-field 0 view null))",
+        "nullable borrowed field"),
+    "wrong_typed_context": (
+        "typedef struct { int value; } A; typedef struct { int value; } B; "
+        "static int inspect(void *context) { A *a=context; return a->value; } "
+        "static int use(void) { B b={7}; return inspect(&b); }",
+        "(record A) (record B) (function inspect (context 0 A))",
+        "exact object"),
+    "variadic_whole_buffer_unstated": ("typedef struct {const int *data;unsigned n;} Ints; extern void inspect(int tag,...); void f(const Ints *v) {if(!v->data)return;inspect(0,v->data);}", '(record Ints (field data (borrow read nullable) (count n))) (foreign inspect (obligation "A native variadic call."))', "whole dynamic spans"),
+    "nullable_whole_buffer_unguarded": (
+        "#include <stddef.h>\nstatic int first(const int *p,size_t n) { (void)n; return p[0]; }",
+        "(function first (buffer 0) (nullable 0))", "non-null branch"),
+    "nullable_counted_field_known_null": (
+        "#include <stddef.h>\ntypedef struct { const int *data; size_t n; } Window; "
+        "static int total(const Window *w) { int sum=0; "
+        "for (size_t i=0;i<w->n;++i) sum+=w->data[i]; return sum; } "
+        "int f(void) { Window w={0,0}; return total(&w); }",
+        "(record Window (field data (borrow read nullable) (count n)))", "must exist"),
 }
 
 HEAP_C = "extern void *reserve(unsigned long n); extern void dispose(void *p); "
@@ -151,6 +279,10 @@ NEGATIVE.update({
 POSITIVE.update({
     "record_field_post": (READER_RECORD + 'void replace(Reader *r,int *p) {r->item=p;} int f(void) {int a=3,b=7;Reader r={&a};replace(&r,&b);return *r.item;}', READER_CONTRACT + ' (function replace (stores-field 0 item 1))'),
     "record_field_post_branches": (READER_RECORD + 'void replace(Reader *r,int *p,int yes) {if(yes)r->item=p;else r->item=p;} int f(void) {int a=3,b=7;Reader r={&a};replace(&r,&b,1);return *r.item;}', READER_CONTRACT + ' (function replace (stores-field 0 item 1))'),
+    "record_field_post_transient": (READER_RECORD + 'void replace(Reader *r,int *p) {int temporary=3;r->item=&temporary;*r->item+=1;r->item=p;} int f(void) {int a=3,b=7;Reader r={&a};replace(&r,&b);return *r.item;}', '(record Reader (field item (borrow write))) (function replace (stores-field 0 item 1))'),
+    "record_field_post_source_path": (READER_RECORD + 'typedef struct {int *item;} Holder; void replace(Reader *r,Holder *h) {r->item=h->item;} int f(void) {int a=3,b=7;Reader r={&a};Holder h={&b};replace(&r,&h);return *r.item;}', READER_CONTRACT + ' (record Holder (field item (borrow write))) (function replace (stores-field 0 item (borrow 1 item)))'),
+    "record_field_post_preserved": (READER_RECORD + 'void preserve(Reader *r) {(void)r;} int f(void) {int a=3;Reader r={&a};preserve(&r);return *r.item;}', READER_CONTRACT + ' (function preserve (preserves-field 0 item))'),
+    "record_field_post_restore_branch": (READER_RECORD + 'void temporary(Reader *r,int yes) {int *entry=r->item;if(yes){int local=3;r->item=&local;*r->item+=1;r->item=entry;}} int f(void) {int a=3;Reader r={&a};temporary(&r,1);return *r.item;}', '(record Reader (field item (borrow write))) (function temporary (preserves-field 0 item))'),
     "record_take_field": (HEAP_C + OWNER_RECORD + 'void consume(Owner *r) {dispose(r->item);} int f(void) {' + OWNER_START + 'Owner r={p};consume(&r);return 7;}', OWNER_CONTRACT + ' (function consume (takes-field 0 item))'),
     "record_heap_destroy": (HEAP_C + OWNER_RECORD + 'void destroy(Owner *r) {dispose(r->item);dispose(r);} int f(void) {Owner *r=(Owner *)reserve(sizeof(Owner));if(!r){dispose(r);return 0;} int *p=(int *)reserve(sizeof(int));if(!p){dispose(p);dispose(r);return 0;} *p=7;r->item=p;destroy(r);return 7;}', OWNER_CONTRACT + ' (function destroy (owns 0 heap))'),
     "record_call_read": (READER_RECORD + 'int read_item(const Reader *r) { return *r->item; } int f(void) {int n=7;Reader r={&n};return read_item(&r);}', READER_CONTRACT),
@@ -168,13 +300,17 @@ POSITIVE.update({
     "owned_argument": (HEAP_C + "void consume(int *p) { dispose(p); } int f(void) { int *p=(int *)reserve(sizeof(int)); if(!p) { dispose(p); return 0; } consume(p); return 1; }", HEAP_CONTRACT + " (function consume (owns 0 heap))"),
     "owned_result": (HEAP_C + "int *make(void) { int *p=(int *)reserve(sizeof(int)); if(!p) { dispose(p); return 0; } *p=7; return p; } int f(void) { int *p=make(); if(!p) { dispose(p); return 0; } int value=*p; dispose(p); return value; }", HEAP_CONTRACT + " (function make (returns-own heap nullable))"),
     "direct_owned_result": (HEAP_C + "int *make(void) { return (int *)reserve(sizeof(int)); }", HEAP_CONTRACT + " (function make (returns-own heap nullable))"),
+    "owned_record_pointer_result": (HEAP_C + 'typedef struct {int *item;} Box; Box *make(void) {Box *b=(Box *)reserve(sizeof *b);if(!b){dispose(b);return 0;}*b=(Box){0};int *p=(int *)reserve(sizeof *p);if(!p){dispose(p);dispose(b);return 0;}*p=7;b->item=p;return b;} void destroy(Box *b){dispose(b->item);dispose(b);} int f(void){Box *b=make();if(!b){dispose(b);return 0;}if(!b->item){destroy(b);return 0;}int n=*b->item;destroy(b);return n;}', HEAP_CONTRACT + ' (record Box (field item (owns heap nullable))) (function make (returns-own heap nullable) (returns-pointee ((item) (owns heap)))) (function destroy (owns 0 heap))'),
+    "borrowed_record_pointer_result": (HEAP_C + 'typedef struct {int *item;} Reader; Reader *make(int *p) {Reader *r=(Reader *)reserve(sizeof *r);if(!r){dispose(r);return 0;}*r=(Reader){p};return r;} int f(void){int n=7;Reader *r=make(&n);if(!r){dispose(r);return 0;}int out=*r->item;dispose(r);return out;}', HEAP_CONTRACT + ' (record Reader (field item (borrow read))) (function make (returns-own heap nullable) (returns-pointee ((item) (borrow 0))))'),
     "direct_release": (HEAP_C + "void f(void) { dispose(reserve(sizeof(int))); }", HEAP_CONTRACT),
 })
 
 NEGATIVE["undersized_call"] = (HEAP_C + "typedef struct {int a,b;} Pair; int read_pair(const Pair *p) { return p->a; } int f(void) { Pair *p=(Pair *)reserve(sizeof(int)); if(!p) { dispose(p); return 0; } int n=read_pair(p); dispose(p); return n; }", HEAP_CONTRACT, "smaller")
 NEGATIVE.update({
     "record_field_post_partial": (READER_RECORD + 'void replace(Reader *r,int *p,int yes) {if(yes)r->item=p;}', READER_CONTRACT + ' (function replace (stores-field 0 item 1))', "stored field's lifetime"),
-    "record_field_post_local": (READER_RECORD + 'void replace(Reader *r,int *p) {int n=7;r->item=&n;}', READER_CONTRACT + ' (function replace (stores-field 0 item 1))', 'declared input lifetime'),
+    "record_field_preserve_changed": (READER_RECORD + 'void change(Reader *r,int *p) {r->item=p;}', READER_CONTRACT + ' (function change (preserves-field 0 item))', "does not retain its original lifetime"),
+    "owned_record_pointer_missing_fields": (HEAP_C + 'typedef struct {int *item;} Box; Box *make(void) {Box *b=(Box *)reserve(sizeof *b);if(!b){dispose(b);return 0;}*b=(Box){0};int *p=(int *)reserve(sizeof *p);if(!p){dispose(p);dispose(b);return 0;}b->item=p;return b;}', HEAP_CONTRACT + ' (record Box (field item (owns heap nullable))) (function make (returns-own heap nullable))', "owned allocation leaves scope"),
+    "record_field_post_local": (READER_RECORD + 'void replace(Reader *r,int *p) {int n=7;r->item=&n;}', READER_CONTRACT + ' (function replace (stores-field 0 item 1))', 'outlives'),
     "record_take_twice": (HEAP_C + OWNER_RECORD + 'void consume(Owner *r) {dispose(r->item);} int f(void) {' + OWNER_START + 'Owner r={p};consume(&r);consume(&r);return 7;}', OWNER_CONTRACT + ' (function consume (takes-field 0 item))', 'moved record field'),
     "record_post_dangling": (READER_RECORD + 'void replace(Reader *r,int *p) {r->item=p;} int f(void) {int a=3;Reader r={&a};{int b=7;replace(&r,&b);}return *r.item;}', READER_CONTRACT + ' (function replace (stores-field 0 item 1))', 'outlives'),
     "record_uncontracted_return": (READER_RECORD + 'Reader make(int *p) {Reader r={p};return r;}', READER_CONTRACT, 'field result contracts'),
@@ -259,6 +395,182 @@ NEGATIVE.update({
     "owning_view_short_record": (OWNED_VIEW + 'int f(void) { unsigned char *p=(unsigned char *)reserve(8); if(!p) { dispose(p); return 0; } WriteView a={p,7}; dispose(a.data); return 0; }', OWNED_CONTRACT, 'whole allocation'),
     "owning_view_move_under_borrow": (OWNED_VIEW + READ_VIEW + 'int f(void) {' + OWNED_START + 'ReadView r={a.data,a.len}; WriteView b=a; int n=r.data[0]; dispose(b.data); return n; }', OWNED_CONTRACT + ' ' + READ_CONTRACT, 'while it is borrowed'),
     "owning_view_leak": (OWNED_VIEW + 'int f(void) {' + OWNED_START + 'a.data[0]=3; return 0; }', OWNED_CONTRACT, 'without release'),
+})
+# Definite initialization at joins, and the overflow builtins' writes.
+POSITIVE.update({
+    "join_written_one_side_unread": ("int f(int c) { int n; if (c) n = 1; return 7; }", ""),
+    "overflow_builtin_initializes": ("int f(unsigned a, unsigned b) { unsigned r; if (__builtin_mul_overflow(a, b, &r)) return 0; return (int)r; }", ""),
+})
+NEGATIVE.update({
+    "join_written_one_side_read": ("int f(int c) { int n; if (c) n = 1; return n; }", "", "uninitialized"),
+    "flag_guarded_first_write": ("int f(unsigned a, unsigned b) { unsigned r; int ok = 1; if (ok && __builtin_mul_overflow(a, b, &r)) ok = 0; if (ok) return (int)r; return 0; }", "", "uninitialized"),
+})
+# Outputs: (initializes I) lends uninitialized storage that the callee writes before every return;
+# (initializes I when-true) before every return of a value other than 0, so the caller may read it on
+# the edge where the call's value is not 0.
+OUTPUTS_C = "#include <stdbool.h>\nstatic bool find(int k, int *out) { if (k > 0) { *out = k; return true; } return false; }\nstatic void get(int *out) { *out = 3; }\n"
+OUTPUTS_CONTRACT = "(function find (initializes 1 when-true)) (function get (initializes 0))"
+POSITIVE.update({
+    "output_when_true": (OUTPUTS_C + "int f(int k) { int v; if (find(k, &v)) return v; return 0; }", OUTPUTS_CONTRACT),
+    "output_always": (OUTPUTS_C + "int f(void) { int v; get(&v); return v; }", OUTPUTS_CONTRACT),
+    "output_negated_under_or": (OUTPUTS_C + "int f(int k) { int v; if (!find(k, &v) || k > 100) return 0; return v; }", OUTPUTS_CONTRACT),
+    # the call runs only on the edge where the earlier operand is false: there its output is written
+    "output_always_after_short_circuit": ("#include <stdbool.h>\nstatic bool fill(int *out) { *out = 4; return true; } int f(int a) { int v; if (a > 5 || !fill(&v)) return 0; return v; }", "(function fill (initializes 0))"),
+})
+NEGATIVE.update({
+    # on the true edge of the ||, fill may not have run
+    "output_read_where_call_skipped": ("#include <stdbool.h>\nstatic bool fill(int *out) { *out = 4; return true; } int f(int a) { int v; if (a > 5 || !fill(&v)) return v; return 0; }", "(function fill (initializes 0))", "uninitialized"),
+})
+NEGATIVE.update({
+    "output_read_on_false_edge": (OUTPUTS_C + "int f(int k) { int v; if (!find(k, &v)) return v; return 0; }", OUTPUTS_CONTRACT, "uninitialized"),
+    "output_read_before_written": ("static void bump(int *out) { *out = *out + 1; } int f(void) { int v; bump(&v); return v; }", "(function bump (initializes 0))", "read before it is written"),
+    "output_unwritten_on_true_return": ("#include <stdbool.h>\nstatic bool find(int k, int *out) { if (k > 0) return true; *out = 1; return false; } int f(int k) { int v; if (find(k, &v)) return v; return 0; }", "(function find (initializes 1 when-true))", "every return of a value other than 0"),
+    "output_address_kept": (OUTPUTS_C + "int f(void) { int v; int *p = &v; get(p); return v; }", OUTPUTS_CONTRACT, "output-initialization"),
+    "output_read_in_same_call": ("static void put(int *out, int x) { *out = x; } int f(void) { int v; put(&v, v); return v; }", "(function put (initializes 0))", "uninitialized"),
+})
+# A read-only conditional whose one side is static storage keeps the other side's borrowed origin;
+# a writable result, or an owned side, still needs one origin.
+STATIC_OR_BORROW = "typedef struct { const int *items; unsigned n; } Box; static const int no_items[1] = {0}; "
+STATIC_OR_BORROW_W = "typedef struct { char *items; unsigned n; } Box; "
+POSITIVE.update({
+    "static_or_borrow_read": (STATIC_OR_BORROW + "const int *items_of(const Box *b) { return b->items ? b->items : no_items; }",
+        "(record Box (field items (borrow read nullable))) (function items_of (returns-borrow 0 items))"),
+})
+NEGATIVE.update({
+    "static_or_borrow_write": (STATIC_OR_BORROW_W + "char *items_of(Box *b) { return b->items ? b->items : \"\"; }",
+        "(record Box (field items (borrow write nullable))) (function items_of (returns-borrow 0 items))", "common lifetime origin"),
+    "static_or_owned_read": (HEAP_C + "static const int no_cells[1] = {0}; int cells(int c) { int *p = (int *)reserve(4); if (!p) { dispose(p); return 0; } *p = 3; const int *r = c ? p : no_cells; int v = r[0]; dispose(p); return v; }",
+        HEAP_CONTRACT, "common lifetime origin"),
+})
+# A borrow ends at its last use: after an item of a block, the borrow of a reference variable declared in
+# that block ends when no later item names the variable, nothing else holds the loan and no live loan
+# reaches it, through a copy or through a pointer to the variable.
+LAST_USE = "typedef struct {int x,y;} P; const int *field(const P *p) { return &p->y; } "
+LAST_USE_CONTRACT = "(function field (returns-borrow 0 y))"
+LAST_USE_HEAP = "#include <stdlib.h>\nint f(void) { int *owner=malloc(sizeof *owner); if(!owner) return 0; *owner=3; const int *v=owner; int r=*v; free(owner); "
+LAST_USE_HEAP_CONTRACT = '(allocator heap malloc free (obligation "malloc/free"))'
+POSITIVE.update({
+    "borrow_ends_at_last_use": (LAST_USE + "int f(void) { P p={1,2}; const int *v=field(&p); int r=*v; p.y=4; return r+p.y; }", LAST_USE_CONTRACT),
+    "exclusive_borrow_ends_at_last_use": ("typedef struct {int x,y;} P; int f(void) { P p={1,2}; int *v=&p.y; *v=3; p.y+=4; return p.y; }", ""),
+    "borrow_ends_in_inner_block": (LAST_USE + "int f(int n) { P p={1,2}; int r=0; if(n) { const int *v=field(&p); r=*v; p.y=4; } return r+p.y; }", LAST_USE_CONTRACT),
+    "borrow_ends_each_iteration": (LAST_USE + "int f(int n) { P p={1,2}; int r=0; while(n-->0) { const int *v=field(&p); r+=*v; p.y=4; } return r; }", LAST_USE_CONTRACT),
+    "borrow_ends_after_loop": (LAST_USE + "int f(int n) { P p={1,2}; const int *v=field(&p); int r=0; while(n-->0) r+=*v; p.y=4; return r+p.y; }", LAST_USE_CONTRACT),
+    "release_after_last_use": (LAST_USE_HEAP + "return r; }", LAST_USE_HEAP_CONTRACT),
+})
+NEGATIVE.update({
+    "borrow_named_later": (LAST_USE + "int f(void) { P p={1,2}; const int *v=field(&p); int r=*v; p.y=4; return r+*v; }", LAST_USE_CONTRACT, "overlapping loan"),
+    "exclusive_borrow_named_later": ("typedef struct {int x,y;} P; int f(void) { P p={1,2}; int *v=&p.y; *v=3; p.y+=4; return *v; }", "", "overlapping loan"),
+    "borrow_used_next_iteration": (LAST_USE + "int f(int n) { P p={1,2}; const int *v=field(&p); int r=0; while(n-->0) { r+=*v; p.y=4; } return r; }", LAST_USE_CONTRACT, "overlapping loan"),
+    "borrow_named_after_jump": (LAST_USE + "int f(int n) { P p={1,2}; const int *v=field(&p); int r=*v; if(n) goto out; p.y=4; out: return r+*v; }", LAST_USE_CONTRACT, "overlapping loan"),
+    "borrow_copied_then_used": (LAST_USE + "int f(void) { P p={1,2}; const int *v=field(&p); const int *w=v; int r=*v; p.y=4; return r+*w; }", LAST_USE_CONTRACT, "overlapping loan"),
+    "borrow_reached_through_pointer": (LAST_USE + "int f(void) { P p={1,2}; const int *v=field(&p); const int *const *pp=&v; int r=*v; p.y=4; return r+**pp; }", LAST_USE_CONTRACT, "overlapping loan"),
+    "use_after_release": (LAST_USE_HEAP + "return r+*v; }", LAST_USE_HEAP_CONTRACT, "outlives"),
+})
+# The frame rule on a record's own storage: an internal callee is lent only the bytes it reaches, in its
+# body or through its callees, each read or written; an external callee keeps its whole pointee.
+FRAME = "typedef struct { int key; int fired[4]; } X; "
+POSITIVE.update({
+    "frame_disjoint_field_write": (FRAME + "static void bump_key(X *x) { x->key += 1; } int f(X *x) { const int *held = &x->fired[1]; bump_key(x); return *held + x->key; }", ""),
+    "frame_read_beside_exclusive": (FRAME + "static int read_fired(const X *x) { return x->fired[1]; } int f(X *x) { int *w = &x->key; *w = read_fired(x); return *w; }", ""),
+    "frame_through_callee": (FRAME + "static void inner(X *x) { x->key = 1; } static void outer(X *x) { inner(x); } int f(X *x) { const int *held = &x->fired[0]; outer(x); return *held; }", ""),
+    "frame_recursive": (FRAME + "static void down(X *x, int n) { if (n > 0) { x->key += n; down(x, n - 1); } } int f(X *x) { const int *held = &x->fired[2]; down(x, 3); return *held + x->key; }", ""),
+})
+NEGATIVE.update({
+    "frame_overlapping_field_write": (FRAME + "static void bump_fired(X *x) { x->fired[1] += 1; } int f(X *x) { const int *held = &x->fired[1]; bump_fired(x); return *held + x->key; }", "", "overlapping loan"),
+    "frame_overlap_through_callee": (FRAME + "static void inner(X *x) { x->fired[0] = 1; } static void outer(X *x) { inner(x); } int f(X *x) { const int *held = &x->fired[0]; outer(x); return *held; }", "", "overlapping loan"),
+    "frame_whole_copy": (FRAME + "static X copy_of(const X *x) { return *x; } int f(X *x) { int *w = &x->key; X c = copy_of(x); *w = 2; return c.key; }", "", "overlapping loan"),
+    "frame_external_callee_whole": (FRAME + "void bump_key_ext(X *x) { x->key += 1; } int f(X *x) { const int *held = &x->fired[1]; bump_key_ext(x); return *held; }", "", "overlapping loan"),
+})
+# A null record owns no fields: an owned record parameter that admits null discharges the record's owning
+# fields on its null path, a null record lends null for each field, and a record that may be null hands on
+# the fields it would hold to a parameter that admits null.
+TABLE = "#include <stdlib.h>\ntypedef struct { int *cells; unsigned n; } Table; static void table_release(Table *t) { free(t->cells); free(t); } "
+TABLE_CONTRACT = '(allocator heap malloc free (obligation "malloc/free")) (record Table (field cells (owns heap nullable) (count n))) (function table_release (owns 0 heap)) (function table_free (owns 0 heap) (nullable 0))'
+POSITIVE.update({
+    "null_record_release_join": (TABLE + "void table_free(Table *t) { if (t) table_release(t); }", TABLE_CONTRACT),
+    "null_record_release_return": (TABLE + "void table_free(Table *t) { if (!t) return; table_release(t); }", TABLE_CONTRACT),
+    "null_record_argument": (TABLE + "static void table_free(Table *t) { if (t) table_release(t); } int use(void) { Table *t = NULL; table_free(t); return 0; }", TABLE_CONTRACT),
+    "maybe_null_record_argument": (TABLE + "static void table_free(Table *t) { if (t) table_release(t); } void table_dispose(Table *t) { table_free(t); }", TABLE_CONTRACT + " (function table_dispose (owns 0 heap) (nullable 0))"),
+})
+NEGATIVE.update({
+    "null_record_release_forgets_field": (TABLE + "void table_free(Table *t) { if (t) free(t); }", TABLE_CONTRACT, "unreleased owning field"),
+    "maybe_null_record_to_nonnull": (TABLE + "void table_dispose(Table *t) { table_release(t); }", TABLE_CONTRACT.replace(" (function table_free (owns 0 heap) (nullable 0))", "") + " (function table_dispose (owns 0 heap) (nullable 0))", "precise non-null record"),
+})
+
+# One element selected from a counted buffer retains that buffer as its
+# lifetime origin.  The callee receives exactly one complete plain-data object;
+# bounds remain the caller's explicit C guard.
+ELEMENT_VEC = "#include <stddef.h>\ntypedef struct { int *data; size_t len; } ElementVec; "
+ELEMENT_RECORD = "(record ElementVec (field data (borrow write nullable) (count len)))"
+ELEMENT_FUNCTIONS = " (function read_element (element 0)) (function write_element (element 0)) (function keep_element (element 0) (returns-borrow 0))"
+POSITIVE.update({
+    "element_exact_object": (
+        "static int read_element(const int *p) { return *p; } int f(void) { int n=7; return read_element(&n); }",
+        "(function read_element (element 0))"),
+    "element_counted_selection": (
+        ELEMENT_VEC +
+        "static int read_element(const int *p) { return *p; } "
+        "static void write_element(int *p, int value) { *p=value; } "
+        "static const int *keep_element(const int *p) { return p; } "
+        "int f(ElementVec *v, size_t i) { if (!v->data || i >= v->len) return 0; "
+        "write_element(&v->data[i], 7); const int *held=keep_element(&v->data[i]); "
+        "return read_element(held); }",
+        ELEMENT_RECORD + ELEMENT_FUNCTIONS),
+    "element_return_exact_object": (
+        "static const int *keep_element(const int *p) { return p; } "
+        "int f(void) { int n=9; return *keep_element(&n); }",
+        "(function keep_element (element 0) (returns-borrow 0))"),
+    "takes_nested_record": (
+        "#include <stdlib.h>\n"
+        "typedef struct { int *data; } Leaf; "
+        "typedef struct { Leaf leaf; int *top; } Nest; "
+        "static void nested_free(Nest *n) { free(n->leaf.data); free(n->top); }",
+        "(allocator heap malloc free (obligation \"malloc/free\")) "
+        "(record Leaf (field data (owns heap nullable))) "
+        "(record Nest (field top (owns heap nullable))) "
+        "(function nested_free (takes-record 0))"),
+})
+NEGATIVE.update({
+    "element_uncounted_interior": (
+        "#include <stddef.h>\nstatic int read_element(const int *p) { return *p; } "
+        "int f(size_t i) { int a[2]={1,2}; return read_element(&a[i]); }",
+        "(function read_element (element 0))", "exact object or a counted-buffer origin"),
+    "element_nullable_argument": (
+        "static int read_element(const int *p) { return *p; } int f(void) { return read_element(0); }",
+        "(function read_element (element 0))", "non-null selected object"),
+    "element_reaches_second_object": (
+        "static int read_second(const int *p) { return p[1]; }",
+        "(function read_second (element 0))", "constant subscript exceeds"),
+    "element_reference_bearing": (
+        "typedef struct { int *value; } Cell; static int read_cell(const Cell *p) { return *p->value; }",
+        "(function read_cell (element 0))", "complete plain-data object"),
+    "element_incomplete": (
+        "struct Cell; static int present(const struct Cell *p) { return p != 0; }",
+        "(function present (element 0))", "complete plain-data object"),
+    "element_nullable_contract": (
+        "static int maybe(const int *p) { return p ? *p : 0; }",
+        "(function maybe (element 0) (nullable 0))", "element is a distinct nonnull borrow"),
+    "element_origin_laundered": (
+        ELEMENT_VEC +
+        "static int ordinary(const int *p) { return *p; } "
+        "static int selected(const int *p) { return ordinary(p); } "
+        "int f(ElementVec *v, size_t i) { if (!v->data || i >= v->len) return 0; "
+        "return selected(&v->data[i]); }",
+        ELEMENT_RECORD + " (function selected (element 0))", "must retain that origin"),
+    "takes_nested_record_partial": (
+        "#include <stdlib.h>\n"
+        "typedef struct { int *data; } Leaf; "
+        "typedef struct { Leaf leaf; int *top; } Nest; "
+        "static void nested_free(Nest *n) { free(n->top); }",
+        "(allocator heap malloc free (obligation \"malloc/free\")) "
+        "(record Leaf (field data (owns heap nullable))) "
+        "(record Nest (field top (owns heap nullable))) "
+        "(function nested_free (takes-record 0))",
+        "unreleased owning field"),
+    "takes_record_read_only": (
+        "typedef struct { int *data; } Leaf; static void inspect(const Leaf *p) { (void)p; }",
+        "(record Leaf (field data (borrow read))) (function inspect (takes-record 0))",
+        "writable pointer"),
 })
 
 

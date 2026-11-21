@@ -1,0 +1,8 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership
+      (check-all)
+      (record Table (field cells (owns heap nullable) (count used)))
+      (foreign push_u (grows 0) (obligation "Appends one value; may move the buffer."))
+      (function eat (buffer 0) (owns 0 heap)))
+    (include "r8_owned_buffer_param.c")))

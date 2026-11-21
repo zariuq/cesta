@@ -1,0 +1,11 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership
+      (check-all)
+      (record Table (field cells (owns heap nullable) (count used)))
+      (record Map (field pairs (owns heap nullable) (count n)) (field seen (borrow read nullable) (count seen_n)))
+      (function at (returns-borrow 0 cells))
+      (function last (buffer 0))
+      (foreign push_u (grows 0)
+        (obligation "Appends one value, moving the buffer to a larger allocation of the heap family when full; on failure nothing changes.")))
+    (include "accepted.c")))

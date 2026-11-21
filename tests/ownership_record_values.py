@@ -72,6 +72,9 @@ typedef struct {int *item;} Box;
       record_release(second.item);return value==41?0:1;}
 '''
     positives['owned']=document(owning_prefix+owning_make+owning_main,owning_contracts)
+    # a borrow ends at its last use: once it is dead, the record and its owner can be returned
+    positives['owned_return_after_last_borrow']=document(owning_prefix+owning_make.replace(
+        'Box result={p};return result;', 'Box result={p};const int *borrow=result.item;(void)borrow;return result;')+owning_main,owning_contracts)
     positives['owned_failure']=document(owning_prefix+owning_make+
         owning_main.replace('value==41','value==0'),owning_contracts)
     array_prefix='''typedef struct {const int *item;} Cell;
@@ -136,8 +139,11 @@ typedef struct {int *item;} Box;
         owning_main.replace('Box second=relay(first);','Box second=relay(first);Box third=relay(first);record_release(third.item);'),owning_contracts)
     negatives['owned_leak']=document(owning_prefix+owning_make+
         owning_main.replace('record_release(second.item);',''),owning_contracts)
-    negatives['return_borrowed_owner']=document(owning_prefix+owning_make.replace(
-        'Box result={p};return result;', 'Box result={p};const int *borrow=result.item;(void)borrow;return result;'),owning_contracts)
+    # moving the owner while a borrow of its allocation is still used afterwards
+    negatives['move_borrowed_owner']=document(owning_prefix+owning_make.replace(
+        'Box relay(Box value){return value;}',
+        'Box relay(Box value){const int *borrow=value.item;Box out=value;int seen=borrow?*borrow:0;(void)seen;return out;}'),
+        owning_contracts)
     negatives['double_array_move']=document(pair_code.replace('Pair result={{a,b}}','Pair result={{a,a}}'),pair_contracts)
     negatives['array_wrong_origin']=document(array_prefix.replace('result={{{a},{b}}}','result={{{b},{a}}}'),array_contracts)
     negatives['array_incomplete_contract']=document(array_prefix,array_contracts.replace(' ((rows 1 item) (borrow 1))',''))

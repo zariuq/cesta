@@ -1,0 +1,5 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (record Pair (field a (borrow read)) (field b (borrow read))))
+    (native "/* The frame rule: a function's interface lists the fields it reaches, in its\n   body or through its callees; an external function keeps every field. */\ntypedef struct { const int *a; const int *b; } Pair;\nstatic int first(const Pair *p) { return *p->a; }          /* reaches a */\nstatic int forward(const Pair *p) { return first(p); }     /* reaches a through first */\nstatic int both(const Pair *p) { return *p->a + *p->b; }   /* reaches a and b */\nstatic int none(const Pair *p) { (void)p; return 0; }      /* reaches nothing */\nint api(const Pair *p) { return first(p) + none(p); }      /* external: every field */\nint use(void) {\n    int x = 1, y = 2;\n    Pair p = {&x, &y};\n    return forward(&p) + both(&p) + api(&p);\n}\nint main(void) { return use() == 5 ? 0 : 1; }\n")))

@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -171,13 +172,26 @@ def corrupt_targets(tree):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--cesta", type=Path, default=CESTA)
     parser.add_argument("--lean-project", type=Path, default=ROOT.parent / "Mettapedia/lean/mettapedia")
     parser.add_argument("--lean-memory-mb", type=int)
     parser.add_argument("--module", action="append", type=Path, default=[])
+    parser.add_argument("--only-modules", action="store_true",
+                        help="admit the named modules without replaying the bundled examples")
     args = parser.parse_args()
+    if args.only_modules and not args.module:
+        parser.error("--only-modules requires at least one --module")
+    executable = shutil.which(str(args.cesta))
+    if not executable:
+        parser.error("--cesta must name an executable")
+    compiler = Path(executable).resolve()
     project = args.lean_project.resolve()
+    modules = [path.resolve() for path in args.module]
+    if not args.only_modules:
+        modules[:0] = [ROOT / "protocols" / f"{name}.module"
+                       for name in ("Admission", "Delivery", "Current", "CallOnce")]
     work = Path(tempfile.mkdtemp(prefix="protocol-admission-", dir=ROOT / "build"))
-    binary_hash = hashlib.sha256(CESTA.read_bytes()).hexdigest()
+    binary_hash = hashlib.sha256(compiler.read_bytes()).hexdigest()
     models = {}
     for name in MODULES:
         path = name.replace(".", "/")
@@ -199,12 +213,16 @@ def main():
              "  simp [Instrumentation.checkPlan, valid.target, unequal]",
              "#print axioms rejectChangedInstrumentation"]
     admitted, refused, instrumented_admitted, instrumented_refused = 0, 0, 0, 0
-    for path in [ROOT / "protocols/Admission.module", ROOT / "protocols/Delivery.module",
-                 ROOT / "protocols/Current.module", ROOT / "protocols/CallOnce.module", *args.module]:
+    plans = []
+    for path in modules:
+        source_hash = hashlib.sha256(path.read_bytes()).hexdigest()
         name, data = declaration(path)
-        emitted = run([CESTA, "protocol", "plan", path, "Protocols"]).stdout
-        (work / f"plan-{admitted}.sexp").write_text(emitted)
-        record = parse(emitted.encode())[0]
+        emitted = run([compiler, "protocol", "plan", path, "Protocols"]).stdout.encode()
+        plan_path = work / f"plan-{admitted}.sexp"
+        plan_path.write_bytes(emitted)
+        plans.append(dict(protocol=name, module=path.name, source_sha256=source_hash,
+                          plan=plan_path.name, plan_sha256=hashlib.sha256(emitted).hexdigest()))
+        record = parse(emitted)[0]
         assert record[1] == name and record[2:7] == data[2:7]
         target = record[7][1]
         lines += [f"def source{admitted} : Protocol := " + source(name, data),
@@ -260,13 +278,14 @@ def main():
                       f'  rejectChangedInstrumentation ivalid{admitted} _ (by decide)']
             instrumented_refused += 1
         admitted += 1
-    name, data = declaration(ROOT / "protocols/Admission.module")
-    for label, changed in mutations(data):
-        # C lexical adequacy is a stronger native check, not a Lean claim.
-        if label in ("C keyword", "parameter shadow", "wrong arity", "unknown opcode", "invalid outcome", "unknown kind"):
-            continue
-        lines += ["example : check (" + source(name, changed) + ") = false := by decide"]
-        refused += 1
+    if not args.only_modules:
+        name, data = declaration(ROOT / "protocols/Admission.module")
+        for label, changed in mutations(data):
+            # C lexical adequacy is a stronger native check, not a Lean claim.
+            if label in ("C keyword", "parameter shadow", "wrong arity", "unknown opcode", "invalid outcome", "unknown kind"):
+                continue
+            lines += ["example : check (" + source(name, changed) + ") = false := by decide"]
+            refused += 1
     file = work / "ActualProtocols.lean"
     file.write_text("\n".join(lines) + "\n")
     command = ["lake", "env", "lean", "-DwarningAsError=true"]
@@ -278,12 +297,14 @@ def main():
         raise RuntimeError(result.stdout)
     for names in re.findall(r"depends on axioms:\s*\[(.*?)\]", result.stdout, re.S):
         assert set(x.strip() for x in names.split(",") if x.strip()) <= {"propext", "Classical.choice", "Quot.sound"}
-    assert hashlib.sha256(CESTA.read_bytes()).hexdigest() == binary_hash
+    assert hashlib.sha256(compiler.read_bytes()).hexdigest() == binary_hash
+    for path, recorded in zip(modules, plans, strict=True):
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == recorded["source_sha256"]
     for name, recorded in models.items():
         path = name.replace(".", "/")
         assert hashlib.sha256((project / (path + ".lean")).read_bytes()).hexdigest() == recorded["source"]
         assert hashlib.sha256((project / ".lake/build/lib/lean" / (path + ".olean")).read_bytes()).hexdigest() == recorded["object"]
-    (work / "summary.json").write_text(json.dumps(dict(binary_sha256=binary_hash, models=models,
+    (work / "summary.json").write_text(json.dumps(dict(binary_sha256=binary_hash, models=models, plans=plans,
          admitted=admitted, refused=refused, instrumented_admitted=instrumented_admitted,
          instrumented_refused=instrumented_refused,
          boundary="Native hook contracts, validator purity, private counter storage and C printing/compiler behavior remain tested obligations."), indent=2) + "\n")

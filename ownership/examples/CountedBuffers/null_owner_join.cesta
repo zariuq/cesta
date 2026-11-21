@@ -1,0 +1,6 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (allocator heap (malloc calloc) free
+        (obligation "malloc and calloc give fresh storage of the requested extent or null; free releases one allocation once and accepts null.")))
+    (include "null_owner_join.c")))

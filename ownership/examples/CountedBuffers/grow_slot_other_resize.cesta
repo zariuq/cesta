@@ -1,0 +1,10 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (allocator heap (malloc calloc) free (resize realloc)
+        (obligation "malloc and calloc give fresh storage of the requested extent or null; realloc moves an allocation to fresh storage of the requested extent and releases the old, or returns null and changes nothing; free releases one allocation once and accepts null."))
+      (allocator arena (arena_alloc) arena_free (resize arena_resize)
+        (obligation "arena_alloc gives fresh storage or null; arena_resize moves it or returns null and changes nothing; arena_free releases it once."))
+      (record Table (field cells (owns heap nullable) (count used)))
+      (function push (grows 1 heap) (reallocates 0 heap)))
+    (include "grow_slot_other_resize.c")))

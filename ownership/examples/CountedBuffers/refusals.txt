@@ -1,0 +1,25 @@
+r1_live_across_growth	overlapping loan prevents exclusive access
+r2_uncounted_owned_field	dynamic pointer subscript requires a checked bounded view
+r3_pointer_elements	counted buffer elements must be plain data without references
+r4_count_not_integer	a buffer's count must be an integer member of the same record
+r5_grows_uncounted	grows requires the address of a counted buffer field
+r6_buffer_to_fixed_pointee	whole dynamic spans require a view parameter
+r7_arith_non_buffer	pointer arithmetic requires a bounded view
+r8_owned_buffer_param	an owned buffer parameter needs an allocation-extent contract
+r9_owner_grows_from_null	a counted buffer the callee may grow must be a whole input of the caller
+dynamic_leak	owned allocation leaves scope without release or transfer
+dynamic_use_after_free	read of an uninitialized or moved value
+dynamic_double_free	read of an uninitialized or moved value
+dynamic_pointer_elements	pointer store has no declared lifetime destination
+dynamic_null_buffer	nullable reference requires a non-null branch before access
+record_view_uncounted	a pointer field that is not counted cannot hold a whole buffer
+null_owner_leak	owned allocation leaves scope without release or transfer
+grow_use_after_free	store its fresh storage before reaching it
+grow_never_refilled	not replaced before this return
+grow_read_only	write through a shared loan
+grow_realloc_early_use	store its fresh storage before reaching it
+grow_realloc_loop_test	a loop condition tests a reallocation
+grow_slot_early_use	store its fresh storage before reaching it
+grow_slot_other_resize	a reallocation parameter takes its family's reallocation interface
+grow_slot_unnamed	a checked growth names the buffer's allocator family
+grow_slot_never_stored	not replaced before this return

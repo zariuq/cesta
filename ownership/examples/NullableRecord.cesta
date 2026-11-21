@@ -1,0 +1,9 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (allocator heap malloc free (obligation "malloc/free"))
+      (record Table (field cells (owns heap nullable) (count n)))
+      (function table_release (owns 0 heap))
+      (function table_free (owns 0 heap) (nullable 0))
+      (function table_dispose (owns 0 heap) (nullable 0)))
+    (native "/* A null record owns no fields: a release that admits null discharges the\n   record's owning fields where the record is null, a caller may pass it null,\n   and a record that may be null is handed on with the fields it would hold. */\n#include <stddef.h>\nvoid *malloc(size_t); void free(void *);\ntypedef struct { int *cells; unsigned n; } Table;\nstatic void table_release(Table *t) { free(t->cells); free(t); }\nstatic void table_free(Table *t) { if (t) table_release(t); }   /* the null path owns nothing */\nstatic void table_dispose(Table *t) { table_free(t); }          /* may be null: handed on */\nint main(void) {\n    Table *t = malloc(sizeof *t);\n    if (!t) return 1;\n    t->cells = malloc(2 * sizeof *t->cells);\n    t->n = t->cells ? 2 : 0;\n    table_dispose(t);\n    Table *none = NULL;\n    table_free(none);\n    return 0;\n}\n")))

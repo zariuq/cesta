@@ -163,10 +163,10 @@ def qualify(records, plans, work, lean_root, accepted=True):
         prefix = 'Ownership' + hashlib.sha256(target.name.encode()).hexdigest()[:20] + 'Parts'
         units.append((unit, renamed, prefix, stats))
 
-    imports = ['import Mettapedia.GSLT.LanguageDef.OwnershipComposition']
+    imports = ['import Mettapedia.Ownership.Composition']
     imports += [f'import body{index}' for index in range(len(units))]
-    declarations = imports + ['open Mettapedia.GSLT.LanguageDef.Ownership',
-        'open Mettapedia.GSLT.LanguageDef.Ownership.Composition',
+    declarations = imports + ['open Mettapedia.Ownership',
+        'open Mettapedia.Ownership.Composition',
         'set_option maxRecDepth 200000', 'set_option maxHeartbeats 0', 'namespace ActualComposition']
     definitions, assumptions, targets = [], [], []
     for unit_index, (unit, plan, prefix, _) in enumerate(units):

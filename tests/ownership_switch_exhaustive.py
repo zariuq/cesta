@@ -34,7 +34,7 @@ int with_break(int n){switch(n){case 0:break;default:return 9;}return 7;}
         if event[0]=='switch-total':event[0]=native.Sym('switch')
     # Keep the actual callable table and the altered generated body visible to Lean.
     audit=work/'NoMatch.lean'
-    audit.write_text('import SwitchParts.Names\nopen Mettapedia.GSLT.LanguageDef.Ownership\nopen SwitchParts\nset_option maxRecDepth 200000\nset_option maxHeartbeats 0\ndef altered : Function := '+native.function(changed)+'\nexample : admitFunction callables altered = false := by decide +kernel\n')
+    audit.write_text('import SwitchParts.Names\nopen Mettapedia.Ownership\nopen SwitchParts\nset_option maxRecDepth 200000\nset_option maxHeartbeats 0\ndef altered : Function := '+native.function(changed)+'\nexample : admitFunction callables altered = false := by decide +kernel\n')
     subprocess.run(['lake','env','lean','--root='+str(work),audit],cwd=args.lean_root.resolve(),check=True,env={**os.environ,'LEAN_PATH':str(work)+os.pathsep+os.environ.get('LEAN_PATH','')})
     (work/'summary.json').write_text(json.dumps(dict(admitted=admitted,spurious_no_match_refused=True),indent=2)+'\n')
     print('ownership switches: five actual plans admitted; spurious no-match path refused')

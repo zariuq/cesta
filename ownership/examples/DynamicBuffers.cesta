@@ -1,0 +1,14 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (include <stddef.h>)
+    (ownership
+      (check-all)
+      (allocator heap (malloc calloc) free
+        (obligation "malloc and calloc give fresh storage of the requested extent or null; free releases one allocation once and accepts null."))
+      (foreign memset (buffer 0) (returns-borrow 0)
+        (obligation "Writes the byte c to the first n bytes of the buffer, which holds them; retains no pointer."))
+      (foreign memcmp (buffer 0) (buffer 1)
+        (obligation "Reads the first n bytes of both buffers, which hold them; retains no pointer."))
+      (function same_prefix (buffer 0) (buffer 1)))
+    (native "void *malloc(size_t); void *calloc(size_t, size_t); void free(void *); void *memset(void *, int, size_t); int memcmp(const void *, const void *, size_t);\n")
+    (fn unsigned sum_squares ((size_t n)) (var unsigned (* a) (call malloc (* n (sizeof (* a))))) (if (! a) (block (call free a) (return 0))) (call memset a 0 (* n (sizeof (* a)))) (for (var size_t i 0) (< i n) (post++ i) (= ([] a i) (cast unsigned (* i i)))) (var unsigned s 0) (for (var size_t i 0) (< i n) (post++ i) (+= s ([] a i))) (call free a) (return s)) (fn int same_prefix (((const unsigned) (* x)) ((const unsigned) (* y)) (size_t n)) (var unsigned (* b) (call calloc n (sizeof (* b)))) (if (! b) (block (call free b) (return 0))) (for (var size_t i 0) (< i n) (post++ i) (= ([] b i) (cast unsigned i))) (var int same (== (call memcmp b b (* n (sizeof (* b)))) 0)) (call free b) (cast void x) (cast void y) (return same)) (fn int fill ((size_t n)) (var unsigned (* a) (call malloc (* (?: n n 1) (sizeof (* a))))) (if (! a) (return 0)) (for (var size_t i 0) (< i n) (post++ i) (= ([] a i) (cast unsigned i))) (call free a) (return 1)) (fn int probe ((size_t n)) (var unsigned (* a) (call malloc (* (?: n n 1) (sizeof (* a))))) (var int ok) (if (! a) (= ok 0) (block (= ([] a 0) 1) (= ok 1))) (call free a) (return ok)) (fn int main (void) (var unsigned ([] sample 3) (init 0 1 2)) (return (?: (&& (&& (&& (== (call sum_squares 4) 14) (call same_prefix sample sample 3)) (call fill 3)) (call probe 2)) 0 1)))))

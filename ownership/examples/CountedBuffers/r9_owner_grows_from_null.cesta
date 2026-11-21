@@ -1,0 +1,6 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (record Table (field cells (owns heap nullable) (count used)))
+      (foreign push_u (grows 0) (obligation "x")))
+    (include "r9_owner_grows_from_null.c")))

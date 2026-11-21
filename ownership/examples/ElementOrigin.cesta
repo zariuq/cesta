@@ -1,0 +1,25 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (include <stddef.h>)
+    (ownership
+      (check-all)
+      (record ElementVec (field data (borrow write nullable) (count len)))
+      (function read_element (element 0))
+      (function write_element (element 0))
+      (function keep_element (element 0) (returns-borrow 0)))
+    (native "typedef struct { int *data; size_t len; } ElementVec;
+static int read_element(const int *p) { return *p; }
+static void write_element(int *p, int value) { *p = value; }
+static const int *keep_element(const int *p) { return p; }
+int element_origin(ElementVec *v, size_t i) {
+    if (!v->data || i >= v->len) return 0;
+    write_element(&v->data[i], 7);
+    const int *held = keep_element(&v->data[i]);
+    return read_element(held);
+}
+int main(void) {
+    int data[1] = {3};
+    ElementVec v = {data, 1};
+    return element_origin(&v, 0) == 7 ? 0 : 1;
+}
+")))

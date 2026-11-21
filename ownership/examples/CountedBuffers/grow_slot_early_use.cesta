@@ -1,0 +1,9 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (allocator heap (malloc calloc) free (resize realloc)
+        (obligation "malloc and calloc give fresh storage of the requested extent or null; realloc moves an allocation to fresh storage of the requested extent and releases the old, or returns null and changes nothing; free releases one allocation once and accepts null."))
+
+      (record Table (field cells (owns heap nullable) (count used)))
+      (function push (grows 1 heap) (reallocates 0 heap)))
+    (include "grow_slot_early_use.c")))

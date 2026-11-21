@@ -1,0 +1,7 @@
+(cesta native-c/1 compact-c/2
+  (unit
+    (ownership (check-all)
+      (record Table (field cells (owns heap nullable) (count used)))
+      (record Peek (field first (borrow read nullable)))
+      (function peek (returns-record ((first) (borrow 0 cells)))))
+    (include "record_view_uncounted.c")))
